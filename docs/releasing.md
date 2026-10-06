@@ -51,6 +51,7 @@ in the dialog.
 | macOS 11+ (universal: Apple silicon + Intel) | `photocraft-<v>-macos-universal.dmg`, `photocraft-cli-<v>-macos-universal.zip` | `macos-15` |
 | Windows 10+ x64 | `photocraft-<v>-windows-x64.msi`, `photocraft-<v>-windows-x64-portable.zip` | `windows-latest` |
 | Windows 10+ x86 (32-bit) | `photocraft-<v>-windows-x86.msi`, `photocraft-<v>-windows-x86-portable.zip` | `windows-latest` |
+| Windows 10+ ARM64 | `photocraft-<v>-windows-arm64.msi`, `photocraft-<v>-windows-arm64-portable.zip` | `windows-latest` (cross-compiled) |
 | Linux x86_64 | `photocraft-<v>-linux-x86_64.{AppImage,deb,rpm,tar.gz,flatpak}` | `ubuntu-22.04` (Flatpak: `ubuntu-24.04`) |
 | Linux aarch64 | `photocraft-<v>-linux-aarch64.{AppImage,deb,rpm,tar.gz,flatpak}` | `ubuntu-22.04-arm` (Flatpak: `ubuntu-24.04-arm`) |
 | FreeBSD 14 x86_64 | `photocraft-<v>-freebsd-x86_64.tar.gz` | FreeBSD 14.3 VM on `ubuntu-latest` |
@@ -91,11 +92,16 @@ open dist/release/photocraft-*-macos-*.dmg
 
 ### Windows
 
-`packaging/windows/package.ps1 -Arch x64|x86` builds with `-C target-feature=+crt-static`.
+`packaging/windows/package.ps1 -Arch x64|x86|arm64` builds with `-C target-feature=+crt-static`.
 The static C runtime means neither the MSI nor the portable zip needs the Visual C++
 redistributable, which matters for a standalone installer and costs only about 100 KB. The flag
 goes in `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`, so host build scripts aren't affected.
 
+- **ARM64** (`aarch64-pc-windows-msvc`) is cross-compiled on the x64 runner, so signing and WiX
+  work exactly as for x64. Before packaging, the script checks each binary's PE Machine (and
+  subsystem: GUI app, console CLI), so a wrong-arch build can't ship labelled ARM64.
+  `.github/workflows/windows-arm64.yml` packages it the same way, installs the MSI on GitHub's
+  Windows 11 ARM64 runner, runs the installed CLI and runs `cargo test --workspace` natively.
 - `apps/photocraft/build.rs` embeds the icon (`assets/app-icon/photocraft.ico`) and
   VERSIONINFO with the `winresource` crate. It only does this when targeting Windows. Elsewhere
   it's a no-op, and the web build doesn't touch that crate.

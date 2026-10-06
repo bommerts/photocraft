@@ -4,6 +4,10 @@
 
     wix build photocraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
 
+  -arch is x64, x86 or arm64. Nothing here is arch-specific: ProgramFiles6432Folder resolves to
+  the 64-bit Program Files for x64 and arm64 and to Program Files (x86) for x86, and there are no
+  custom-action binaries.
+
   Per-machine install into Program Files, a Start Menu shortcut, `.pcraft` owned by PhotoCraft,
   and PhotoCraft offered under "Open with" for PSD/PSB and the image formats it reads (without
   taking over the user's default app for them).

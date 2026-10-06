@@ -1,0 +1,147 @@
+# Windows on ARM (#220): package the ARM64 release the way release.yml does (cross-compiled on an
+# x64 runner, unsigned here), then install that MSI on a Windows 11 ARM64 runner and run it, and
+# run the test suite natively on ARM64.
+name: Windows ARM64
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - "**/build.rs"
+      - .github/workflows/windows-arm64.yml
+      - packaging/windows/**
+  schedule:
+    - cron: "17 5 * * 1" # weekly, so drift in the runner images shows up
+  workflow_dispatch:
+
+concurrency:
+  group: windows-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  package:
+    name: package (cross-compiled on x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      # dtolnay/rust-toolchain (stable branch), pinned by commit.
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+          targets: aarch64-pc-windows-msvc
+      # Swatinem/rust-cache v2.9.2, pinned by commit.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: windows-arm64-package
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build and package (unsigned)
+        shell: pwsh
+        env:
+          DIST: ${{ github.workspace }}\dist\arm64
+        run: ./packaging/windows/package.ps1 -Arch arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: photocraft-windows-arm64
+          path: dist/arm64/*
+          if-no-files-found: error
+          retention-days: 7
+
+  install:
+    name: install and run on ARM64
+    needs: package
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: photocraft-windows-arm64
+          path: dist
+      - name: Install the MSI, check it, run it, uninstall it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandArgumentPassing = 'Standard' # pass the JSON arguments to the CLI verbatim
+          function Invoke-Cli {
+            $out = & $script:cli @args 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "photocraft-cli $($args[0]) exited $LASTEXITCODE" }
+            return $out
+          }
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'PhotoCraft'
+          foreach ($exe in 'photocraft.exe', 'photocraft-cli.exe') {
+            $path = Join-Path $dir $exe
+            if (-not (Test-Path $path)) { Get-ChildItem -Recurse $env:ProgramFiles -Filter $exe | Select-Object -First 3; throw "$exe not installed in $dir" }
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 4)
+            if ($machine -ne 0xAA64) { throw "$exe is for machine 0x$('{0:X}' -f $machine), not ARM64" }
+            Write-Output "ok $path (ARM64)"
+          }
+
+          # The installed CLI runs natively: create, paint, filter, save, reopen and convert a
+          # document through the engine, then batch-process a folder.
+          $script:cli = Join-Path $dir 'photocraft-cli.exe'
+          Write-Output (Invoke-Cli --version)
+          if ((Invoke-Cli commands --filter gaussian) -notmatch 'filter\.blur\.gaussianBlur') { throw 'command registry is missing filter.blur.gaussianBlur' }
+          $work = Join-Path $env:RUNNER_TEMP 'smoke'
+          New-Item -ItemType Directory -Force $work, "$work\in", "$work\out" | Out-Null
+          Invoke-Cli run --new '{"width":320,"height":240,"name":"ARM64"}' `
+            --cmd layer.new.layer --params '{"name":"Ink"}' `
+            --cmd paint.stroke --params '{"points":[[10,10,1],[300,200,1]],"size":12,"color":"#2f7bf5"}' `
+            --cmd filter.blur.gaussianBlur --params '{"radius":3}' `
+            --cmd image.adjustments.invert `
+            --out "$work\smoke.psd" | Out-Null
+          $info = Invoke-Cli info "$work\smoke.psd" --compact | ConvertFrom-Json
+          if ($info.width -ne 320 -or $info.height -ne 240) { throw "smoke.psd is $($info.width)x$($info.height), expected 320x240" }
+          if (($info | ConvertTo-Json -Depth 32 -Compress) -notmatch '"Ink"') { throw 'smoke.psd lost the Ink layer' }
+          Invoke-Cli convert "$work\smoke.psd" "$work\smoke.pcraft" | Out-Null
+          Invoke-Cli convert "$work\smoke.pcraft" "$work\in\flat.png" | Out-Null
+          Invoke-Cli convert "$work\in\flat.png" "$work\in\flat.jpg" --quality 85 | Out-Null
+          [System.IO.File]::WriteAllText("$work\actions.json", '[{"command":"filter.blur.gaussianBlur","params":{"radius":2}},{"command":"image.adjustments.invert"}]')
+          $batch = Invoke-Cli batch --actions "$work\actions.json" --in "$work\in" --out "$work\out" --format tif
+          if ($batch -notmatch '2 succeeded, 0 failed') { Write-Output $batch; throw 'batch did not process both images' }
+          foreach ($f in 'smoke.psd', 'smoke.pcraft', 'in\flat.png', 'in\flat.jpg', 'out\flat.tif') {
+            $path = Join-Path $work $f
+            if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) { throw "$f was not written" }
+          }
+          $back = Invoke-Cli info "$work\smoke.pcraft" --compact | ConvertFrom-Json
+          if ($back.width -ne 320 -or $back.height -ne 240) { throw "smoke.pcraft reopened as $($back.width)x$($back.height)" }
+          Write-Output 'ok photocraft-cli: created, painted, filtered, saved (PSD, .pcraft, PNG, JPEG), reopened and batch-processed on ARM64'
+
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+          if (Test-Path (Join-Path $dir 'photocraft.exe')) { throw 'uninstall left photocraft.exe behind' }
+          Write-Output 'ok uninstalled'
+
+  test:
+    name: test (native ARM64)
+    runs-on: windows-11-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      # dtolnay/rust-toolchain (stable branch), pinned by commit.
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2.9.2, pinned by commit.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: windows-arm64-test
+      - name: Test
+        run: cargo test --workspace --locked
