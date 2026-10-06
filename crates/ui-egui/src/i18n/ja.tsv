@@ -1963,3 +1963,4 @@
 	OpenGL	OpenGL
 	Use tablet pressure	タブレットの筆圧を使用
 	Vulkan	Vulkan
+	No path to make a selection from: draw one with the Pen tool or select one in the Paths panel.	選択範囲を作成するパスがありません。ペンツールで描くか、パスパネルでパスを選択してください。
