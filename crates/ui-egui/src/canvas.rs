@@ -437,6 +437,7 @@ pub(crate) fn draw_readout<const N: usize>(ctx: &egui::Context, id: &str, cursor
 /// Healing Brush and History Brush composite their source.
 enum EngineStroke {
     Brush(Box<photocraft_engine::brush_cmds::LiveStroke>),
+    Mixer(Box<photocraft_engine::brush_cmds::LiveMixer>),
     Retouch(photocraft_engine::retouch_cmds::LiveRetouch),
     Dab(photocraft_engine::retouch_cmds::LiveDab),
 }
@@ -447,6 +448,7 @@ impl EngineStroke {
     fn wants_time(&self) -> bool {
         match self {
             EngineStroke::Brush(l) => l.wants_time(),
+            EngineStroke::Mixer(l) => l.wants_time(),
             EngineStroke::Retouch(_) | EngineStroke::Dab(_) => false,
         }
     }
@@ -454,6 +456,7 @@ impl EngineStroke {
     fn doc(&self) -> &std::sync::Arc<photocraft_doc::Document> {
         match self {
             Self::Brush(s) => &s.doc,
+            Self::Mixer(s) => &s.doc,
             Self::Retouch(s) => &s.doc,
             Self::Dab(s) => &s.doc,
         }
@@ -461,6 +464,7 @@ impl EngineStroke {
     fn bounds(&self) -> DRect {
         match self {
             Self::Brush(s) => s.bounds(),
+            Self::Mixer(s) => s.bounds(),
             Self::Retouch(s) => s.bounds(),
             Self::Dab(s) => s.bounds(),
         }
@@ -468,6 +472,7 @@ impl EngineStroke {
     fn push(&mut self, pts: &[photocraft_engine::paint::StrokePoint]) -> photocraft_engine::Result<DRect> {
         match self {
             Self::Brush(s) => s.push(pts),
+            Self::Mixer(s) => s.push(pts),
             Self::Retouch(s) => s.push(pts),
             Self::Dab(s) => s.push(pts),
         }
@@ -476,6 +481,7 @@ impl EngineStroke {
     fn seed(&self) -> Option<u64> {
         match self {
             Self::Brush(s) => Some(s.seed),
+            Self::Mixer(s) => Some(s.seed),
             Self::Retouch(_) => None,
             Self::Dab(_) => None,
         }
@@ -551,6 +557,9 @@ fn live_stroke(app: &PhotocraftApp, idx: usize) -> Option<&LiveStroke> {
 /// stroke smoothing is the session brush's (the options bar's Smoothing %).
 fn stroke_params(app: &PhotocraftApp, d: &Drag, points: &[Vec<f64>]) -> serde_json::Value {
     let tool = d.tool;
+    if tool == Tool::MixerBrush {
+        return json!({ "points": points, "target": paint_target(app) });
+    }
     let mut p = json!({ "points": points, "erase": d.erase, "zoom": app.point_zoom(), "target": paint_target(app) });
     if d.clear {
         p["mode"] = json!("clear");
@@ -570,6 +579,7 @@ pub(crate) fn strokes_live(tool: Tool) -> bool {
     matches!(
         tool,
         Tool::Brush
+            | Tool::MixerBrush
             | Tool::Pencil
             | Tool::Eraser
             | Tool::ColorReplacement
@@ -596,6 +606,9 @@ fn live_retouch_command(tool: Tool) -> Option<&'static str> {
 /// The command a live-stroking tool commits: the Pencil's (and the Pencil- or Block-mode
 /// Eraser's) `paint.pencil`, else `paint.stroke`.
 pub(crate) fn stroke_command(app: &PhotocraftApp, tool: Tool) -> &'static str {
+    if tool == Tool::MixerBrush {
+        return "paint.mixerBrush";
+    }
     if tool == Tool::Pencil || crate::eraser_ui::pencil_mode(app, tool) || crate::eraser_ui::block_mode(app, tool) { "paint.pencil" } else { "paint.stroke" }
 }
 
@@ -697,7 +710,10 @@ fn begin_live_stroke(app: &PhotocraftApp) -> Option<LiveStroke> {
     static STROKES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let st = app.session.active()?;
     let d = app.drag.as_ref()?;
-    let stroke = if d.tool == Tool::ColorReplacement {
+    let stroke = if d.tool == Tool::MixerBrush {
+        let p = stroke_params(app, d, &app.stylus.stroke_points(&d.points));
+        EngineStroke::Mixer(Box::new(photocraft_engine::brush_cmds::LiveMixer::begin(&app.session, &p).ok()?))
+    } else if d.tool == Tool::ColorReplacement {
         // The params `retouch_ui::finish_stroke` commits.
         let mut p = crate::retouch_ui::color_replacement_params(app);
         p["points"] = json!(d.points);
@@ -3115,9 +3131,10 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
         None => paint_dots(ui, rect, app.session.prefs().interface.show_canvas_dots),
     }
     let border = app.session.prefs().interface.canvas_border;
-    // Default-mode Crop changes its camera during input. Defer its image until the new camera
-    // is known; other tools keep their existing paint order and texture/outline snapshots.
+    // Default-mode Crop changes its camera during input. Live painting must also process the
+    // current pointer samples before preparing the image, or every dab appears a frame late.
     let crop_camera = primary && crate::crop_mode::moves_image(app);
+    let paint_after_input = crop_camera || (primary && strokes_live(app.ui.tool));
     let paint_canvas = |app: &mut PhotocraftApp, ui: &egui::Ui, view: &View, xf: ViewXform| {
         let point_zoom = view.zoom / ppp;
         let drop_shadow = border == photocraft_engine::prefs::CanvasBorder::DropShadow;
@@ -3362,7 +3379,7 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
 
         (img_rect, beyond, layer_edges)
     };
-    let painted = if crop_camera { None } else { Some(paint_canvas(app, ui, &view, xf)) };
+    let painted = if paint_after_input { None } else { Some(paint_canvas(app, ui, &view, xf)) };
     let img_rect = xf.doc_rect(doc.bounds());
 
     // Under an open dialog the canvas widget is inert, but the image still pans and zooms.
@@ -5900,9 +5917,12 @@ fn commit_brush_stroke(app: &mut PhotocraftApp, d: &Drag) {
     }
     let LiveStroke { stroke, doc, key, damage, .. } = l;
     let before = app.session.documents().iter().find(|st| st.doc.id == doc).map(|st| st.doc.clone());
-    if let EngineStroke::Brush(stroke) = stroke
-        && app.session.offer_live_stroke(*stroke).is_err()
-    {
+    let offer = match stroke {
+        EngineStroke::Brush(stroke) => app.session.offer_live_stroke(*stroke),
+        EngineStroke::Mixer(stroke) => app.session.offer_live_mixer(*stroke),
+        _ => Ok(()),
+    };
+    if offer.is_err() {
         app.session.clear_live_stroke();
     }
     let started = crate::gpu_canvas::now_ms();
@@ -5952,6 +5972,10 @@ pub(crate) fn finish_gesture(app: &mut PhotocraftApp, d: Drag) {
     }
     // A live Clone Stamp preview ends here; the commit below replaces it (the Clone Stamp's and
     // History Brush's with the pixels it already drew).
+    if d.tool == Tool::MixerBrush {
+        commit_brush_stroke(app, &d);
+        return;
+    }
     offer_live_retouch(app, &d);
     if live_retouch_command(d.tool).is_some() || crate::retouch_ui::dab_params(app, d.tool).is_some() || d.tool == Tool::ColorReplacement {
         app.live_stroke = None;
@@ -6251,6 +6275,57 @@ mod tests {
         assert_eq!(square_px(r, [150.8, 151.2], [60.0, 50.7]), [49.0, 50.0, 151.0, 152.0]);
         // Already square: unchanged.
         assert_eq!(square_px([10.0, 20.0, 30.0, 40.0], [10.0, 20.0], [30.0, 40.0]), [10.0, 20.0, 30.0, 40.0]);
+    }
+
+    #[test]
+    fn live_brush_texture_includes_this_frames_press_and_moves() {
+        use super::*;
+        for tool in [Tool::Brush, Tool::MixerBrush] {
+            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+            app.run("file.new", json!({"width": 128, "height": 64, "background": "white"})).unwrap();
+            app.run("tools.setColors", json!({"foreground": "#ff0000"})).unwrap();
+            app.run("tools.setBrush", json!({"brush": {"size": 12, "hardness": 1.0, "smoothing": {"amount": 0.0}}})).unwrap();
+            app.ui.tool = tool;
+            app.sync_views();
+            let mut h = egui_kittest::Harness::builder().with_size(vec2(900.0, 640.0)).build_ui_state(
+                |ui, app: &mut PhotocraftApp| {
+                    if !ui.ctx().fonts(|fonts| fonts.families().contains(&egui::FontFamily::Name("medium".into()))) {
+                        return;
+                    }
+                    egui::CentralPanel::default().show(ui, |ui| document_area(app, ui));
+                },
+                app,
+            );
+            PhotocraftApp::setup_context(&h.ctx, Default::default());
+            h.run_steps(3);
+            let p = h.state().last_canvas_rect.center();
+            h.input_mut().events.push(egui::Event::PointerMoved(p));
+            h.input_mut().events.push(egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+            h.run_steps(1);
+            let shown = |h: &mut egui_kittest::Harness<'_, PhotocraftApp>| {
+                let app = h.state_mut();
+                let live = app.live_stroke.as_ref().expect("painting starts on press");
+                let key = live.display_key();
+                let doc = live.stroke.doc().clone();
+                let (_, display) = canvas_display(app, &doc, None);
+                assert_eq!(app.canvases.values().next().unwrap().tex_preview_key, key ^ display, "{tool:?}: texture includes this frame's input");
+            };
+            shown(&mut h);
+            h.input_mut().events.push(egui::Event::PointerMoved(p + vec2(25.0, 0.0)));
+            h.run_steps(1);
+            shown(&mut h);
+            let end = p + vec2(25.0, 0.0);
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run_steps(1);
+            assert!(h.state().live_stroke.is_none());
+            assert!(h.state().committed_stroke.is_some(), "release reuses the shown pixels");
+            assert!(!h.state().ui.status_error, "{}", h.state().ui.status);
+        }
     }
 
     #[test]

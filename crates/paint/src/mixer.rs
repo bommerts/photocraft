@@ -6,11 +6,12 @@
 //! weight. The reservoir amount drains per dab unless `load` is 100 %, so low Load strokes dry out.
 //! A dry brush (`wet = 0`) paints only reservoir colour; an empty, wet brush smears canvas colour.
 
+use photocraft_color::PixelFormat;
 use photocraft_raster::{Surface, from_rgba, to_rgba};
 use serde::{Deserialize, Serialize};
 
 use crate::Stroke;
-use crate::retouch::{alpha_index, apply_dab_stroke, over_native};
+use crate::retouch::{Footprint, Region, alpha_index, apply_dab_stroke, over_native};
 use photocraft_geom::Rect;
 
 /// Fraction of the way the pickup colour moves towards the canvas colour per dab at 100 % Wet.
@@ -69,30 +70,61 @@ pub fn apply_mixer_stroke(
     selection: Option<&Surface>,
     lock_transparency: bool,
 ) -> Rect {
-    let fmt = target.format();
-    let n = fmt.channels();
-    let a = alpha_index(&fmt);
-    let nc = fmt.mode.color_channels();
-    let native = |c: [f32; 4]| {
-        let mut v = from_rgba(&fmt, c);
-        if let Some(ai) = a {
-            v[ai] = 1.0;
-        }
-        v
-    };
-    let res = state.reservoir.map(native);
-    let mut amount = if res.is_some() { state.amount.clamp(0.0, 1.0) } else { 0.0 };
-    let mut pickup: Option<Vec<f32>> = state.pickup.map(native);
-    let (wet, mix, flow, load) = (m.wet.clamp(0.0, 1.0), m.mix.clamp(0.0, 1.0), m.flow.clamp(0.0, 1.0), m.load.clamp(0.0, 1.0));
+    let mut mixer = MixerDab::new(target.format(), m, state, lock_transparency);
     let mut st = stroke.clone();
     st.brush.opacity = 1.0;
-    let mut acc = vec![0.0f32; n];
-    let mut paint = vec![0.0f32; n];
-    let dmg = apply_dab_stroke(target, &st, selection, lock_transparency, 0, |work, fp| {
+    let dmg = apply_dab_stroke(target, &st, selection, lock_transparency, 0, |work, fp| mixer.apply(work, fp, sample));
+    *state = mixer.state();
+    dmg
+}
+
+/// Incremental Mixer Brush paint carried between dabs. Shared by live and committed strokes.
+#[derive(Clone)]
+pub struct MixerDab {
+    fmt: PixelFormat,
+    reservoir: Option<[f32; 4]>,
+    res: Option<Vec<f32>>,
+    pickup: Option<Vec<f32>>,
+    amount: f32,
+    wet: f32,
+    mix: f32,
+    flow: f32,
+    load: f32,
+    lock_transparency: bool,
+    acc: Vec<f32>,
+    paint: Vec<f32>,
+}
+
+impl MixerDab {
+    /// Start from the tool's carried paint, in the target's native colour model.
+    pub fn new(fmt: PixelFormat, settings: &MixerSettings, state: &MixerState, lock_transparency: bool) -> Self {
+        let n = fmt.channels();
+        let a = alpha_index(&fmt);
+        let native = |c: [f32; 4]| {
+            let mut v = from_rgba(&fmt, c);
+            if let Some(ai) = a {
+                v[ai] = 1.0;
+            }
+            v
+        };
+        let res = state.reservoir.map(native);
+        let amount = if res.is_some() { state.amount.clamp(0.0, 1.0) } else { 0.0 };
+        let pickup: Option<Vec<f32>> = state.pickup.map(native);
+        let (wet, mix, flow, load) = (settings.wet.clamp(0.0, 1.0), settings.mix.clamp(0.0, 1.0), settings.flow.clamp(0.0, 1.0), settings.load.clamp(0.0, 1.0));
+        Self { fmt, reservoir: state.reservoir, res, pickup, amount, wet, mix, flow, load, lock_transparency, acc: vec![0.0; n], paint: vec![0.0; n] }
+    }
+
+    /// Paint one dab, sampling the working pixels or an all-layer composite of its footprint.
+    pub fn apply(&mut self, work: &mut Region, fp: &Footprint, sample: Option<&Surface>) {
+        let fmt = self.fmt;
+        let n = fmt.channels();
+        let a = alpha_index(&fmt);
+        let nc = fmt.mode.color_channels();
+        let lock_transparency = self.lock_transparency;
         // Transfer › Wetness / Mix Jitter scale the settings per dab.
-        let (wet, mix) = (wet * fp.dab.wet.clamp(0.0, 1.0), mix * fp.dab.mix.clamp(0.0, 1.0));
+        let (wet, mix) = (self.wet * fp.dab.wet.clamp(0.0, 1.0), self.mix * fp.dab.mix.clamp(0.0, 1.0));
         // Sample the canvas under the dab.
-        acc.iter_mut().for_each(|v| *v = 0.0);
+        self.acc.iter_mut().for_each(|v| *v = 0.0);
         let (mut wsum, mut asum) = (0.0f32, 0.0f32);
         let r = fp.rect.intersect(&work.rect);
         for y in r.y0..r.y1 {
@@ -109,8 +141,8 @@ pub fn apply_mixer_stroke(
                     None => work.px(x, y).to_vec(),
                 };
                 let al = a.map_or(1.0, |ai| px[ai]);
-                for c in 0..nc {
-                    acc[c] += px[c] * w * al;
+                for (acc, value) in self.acc.iter_mut().zip(&px).take(nc) {
+                    *acc += value * w * al;
                 }
                 wsum += w;
                 asum += w * al;
@@ -118,36 +150,38 @@ pub fn apply_mixer_stroke(
         }
         if asum > 1e-6 && wet > 0.0 {
             let ca = asum / wsum.max(1e-6);
-            let canvas: Vec<f32> = (0..n).map(|c| if c < nc { acc[c] / asum } else { 1.0 }).collect();
-            pickup = Some(match pickup.take() {
+            let canvas: Vec<f32> = (0..n).map(|c| if c < nc { self.acc[c] / asum } else { 1.0 }).collect();
+            self.pickup = Some(match self.pickup.take() {
                 None => canvas,
                 Some(p) => p.iter().zip(&canvas).map(|(p, c)| p + (c - p) * PICKUP_RATE * wet * ca).collect(),
             });
         }
-        let wr = if res.is_some() { amount * (1.0 - mix * wet) } else { 0.0 };
-        let wp = if pickup.is_some() { mix * wet } else { 0.0 };
+        let wr = if self.res.is_some() { self.amount * (1.0 - mix * wet) } else { 0.0 };
+        let wp = if self.pickup.is_some() { mix * wet } else { 0.0 };
         let total = wr + wp;
         if total > 1e-6 {
             for c in 0..n {
-                let rv = res.as_ref().map_or(0.0, |v| v[c]);
-                let pv = pickup.as_ref().map_or(0.0, |v| v[c]);
-                paint[c] = (rv * wr + pv * wp) / total;
+                let rv = self.res.as_ref().map_or(0.0, |v| v[c]);
+                let pv = self.pickup.as_ref().map_or(0.0, |v| v[c]);
+                self.paint[c] = (rv * wr + pv * wp) / total;
             }
-            let dep = total.min(1.0) * flow;
+            let dep = total.min(1.0) * self.flow;
             for y in r.y0..r.y1 {
                 for x in r.x0..r.x1 {
                     let k = fp.at(x, y) * dep;
                     if k > 0.0 {
-                        over_native(&fmt, work.px_mut(x, y), &paint, k, lock_transparency);
+                        over_native(&fmt, work.px_mut(x, y), &self.paint, k, lock_transparency);
                     }
                 }
             }
         }
-        amount *= 1.0 - 0.08 * (1.0 - load);
-    });
-    state.amount = amount;
-    state.pickup = pickup.map(|p| to_rgba(&fmt, &p));
-    dmg
+        self.amount *= 1.0 - 0.08 * (1.0 - self.load);
+    }
+
+    /// Paint remaining after the dabs rendered so far.
+    pub fn state(&self) -> MixerState {
+        MixerState { reservoir: self.reservoir, amount: self.amount, pickup: self.pickup.as_ref().map(|p| to_rgba(&self.fmt, p)) }
+    }
 }
 
 #[cfg(test)]

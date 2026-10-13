@@ -672,6 +672,12 @@ impl Session {
         Ok(())
     }
 
+    /// Offer the Mixer Brush's rendered pixels and carried paint to its normal command.
+    pub fn offer_live_mixer(&mut self, live: brush_cmds::LiveMixer) -> Result<()> {
+        self.live_commit = Some(live.into_commit(self)?);
+        Ok(())
+    }
+
     /// Withdraw an offer the command didn't take.
     pub fn clear_live_stroke(&mut self) {
         self.live_commit = None;

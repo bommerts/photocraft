@@ -8,7 +8,10 @@
 
 use photocraft_doc::LayerContent;
 use photocraft_geom::Rect;
-use photocraft_paint::mixer::{MixerSettings, apply_mixer_stroke};
+use photocraft_paint::mixer::{MixerSettings, MixerState, apply_mixer_stroke};
+
+mod mixer_live;
+pub use mixer_live::LiveMixer;
 use photocraft_paint::replace::{Limits, ReplaceMode, ReplaceSettings, Sampling, apply_color_replacement, color_replacement_effect};
 use photocraft_paint::tile::PREVIEW_SIDE;
 use photocraft_paint::{
@@ -458,6 +461,7 @@ pub struct LiveCommit {
     pub(crate) points: Vec<StrokePoint>,
     pub(crate) surface: Surface,
     pub(crate) bounds: Rect,
+    pub(crate) mixer: Option<MixerState>,
 }
 
 impl LiveCommit {
@@ -541,7 +545,16 @@ impl LiveStroke {
     pub fn into_commit(mut self) -> Result<LiveCommit> {
         let bounds = self.bounds();
         let (surf, _) = crate::channel_cmds::target_surface(std::sync::Arc::make_mut(&mut self.doc), self.layer, &self.params)?;
-        Ok(LiveCommit { cmd: self.cmd, base: self.base, params: self.params, seed: Some(self.seed), points: self.points, surface: surf.clone(), bounds })
+        Ok(LiveCommit {
+            cmd: self.cmd,
+            base: self.base,
+            params: self.params,
+            seed: Some(self.seed),
+            points: self.points,
+            surface: surf.clone(),
+            bounds,
+            mixer: None,
+        })
     }
 
     /// Everything the stroke has touched so far.
@@ -632,7 +645,7 @@ fn pct(p: &Value, k: &str, d: f32) -> f32 {
     num(p, k).unwrap_or(d).clamp(0.0, 100.0) / 100.0
 }
 
-fn mixer_brush(s: &mut Session, p: &Value) -> Result<Value> {
+fn mixer_setup(s: &Session, p: &Value) -> Result<(Stroke, MixerSettings, MixerState, Option<photocraft_doc::LayerId>)> {
     let cmd = "paint.mixerBrush";
     let pts = parse_points(p, cmd)?;
     let brush = resolve_brush(s, p, cmd)?;
@@ -645,15 +658,30 @@ fn mixer_brush(s: &mut Session, p: &Value) -> Result<Value> {
         flow: pct(p, "flow", bm.flow * 100.0),
         sample_all_layers: flag(p, "sampleAllLayers", bm.sample_all_layers),
     };
-    let sample_all = m.sample_all_layers;
-    let (clean, load_after) = (flag(p, "cleanAfterStroke", true), flag(p, "loadAfterStroke", true));
+    let load_after = flag(p, "loadAfterStroke", true);
     let mut state = s.tools.mixer.clone();
     if load_after || state.reservoir.is_none() {
         state.load(color(p.get("color"), s.tools.foreground));
     }
     let id = if crate::channel_cmds::is_channel_target(p) { None } else { Some(layer_id(s, p)?) };
     let stroke = Stroke { brush, points: pts };
+    Ok((stroke, m, state, id))
+}
+
+fn mixer_brush(s: &mut Session, p: &Value) -> Result<Value> {
+    let (stroke, m, mut state, id) = mixer_setup(s, p)?;
+    let sample_all = m.sample_all_layers;
+    let live = s.live_commit.take().filter(|l| l.matches(s, "paint.mixerBrush", p, &stroke.points) && l.mixer.is_some());
+    let from_live = live.is_some();
     let dmg = s.edit("Mixer Brush", |doc, _| {
+        if let Some(live) = live {
+            let (surf, _) = crate::channel_cmds::target_surface(doc, id, p)?;
+            *surf = live.surface;
+            if let Some(mixer) = live.mixer {
+                state = mixer;
+            }
+            return Ok(live.bounds);
+        }
         let sel = doc.selection.clone();
         let sample = if sample_all {
             let ds = photocraft_paint::dabs(&stroke);
@@ -672,11 +700,15 @@ fn mixer_brush(s: &mut Session, p: &Value) -> Result<Value> {
         let (surf, lock) = crate::channel_cmds::target_surface(doc, id, p)?;
         Ok(apply_mixer_stroke(surf, sample.as_ref(), &stroke, &m, &mut state, sel.as_ref(), lock))
     })?;
-    if clean {
+    if flag(p, "cleanAfterStroke", true) {
         state.clean();
     }
     s.tools.mixer = state;
-    Ok(damage_json(s, dmg))
+    let mut result = damage_json(s, dmg);
+    if from_live {
+        result["fromLive"] = json!(true);
+    }
+    Ok(result)
 }
 
 /// `paint.colorReplacement`'s stroke and settings. The replacement colour is the brush colour

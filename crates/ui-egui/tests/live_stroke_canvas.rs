@@ -15,6 +15,57 @@ use serde_json::{Value, json};
 type Harness = egui_kittest::Harness<'static, PhotocraftApp>;
 type Pixels = Vec<[u8; 4]>;
 
+#[test]
+fn raw_pointer_brush_and_mixer_pixels_appear_in_the_input_frame() {
+    use photocraft_ui_egui::state::Tool;
+    for flip in [false, true] {
+        for tool in [Tool::Brush, Tool::MixerBrush] {
+            let Some(mut h) = harness() else { return };
+            let app = h.state_mut();
+            app.run("file.new", json!({"width":300,"height":200,"background":"white"})).unwrap();
+            app.run("edit.fill", json!({"color":"#2040df"})).unwrap();
+            app.run("tools.setColors", json!({"foreground":"#ef2000"})).unwrap();
+            app.run("tools.setBrush", json!({"brush":{"size":24,"hardness":1.0,"pressureSize":false,"smoothing":{"amount":0.0}}})).unwrap();
+            app.ui.tool = tool;
+            app.ui.view.flip_horizontal = flip;
+            app.sync_views();
+            h.run_steps(4);
+            let at = h.state().last_canvas_rect.center();
+            let before = h.render().unwrap().get_pixel(at.x as u32, at.y as u32).0;
+            h.input_mut().events.push(egui::Event::PointerMoved(at));
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            let image = h.render().unwrap();
+            assert_ne!(image.get_pixel(at.x as u32, at.y as u32).0, before, "{tool:?} flip={flip}: press visible in its own frame");
+            let next = at + egui::vec2(40.0, 0.0);
+            h.input_mut().events.push(egui::Event::PointerMoved(next));
+            h.step();
+            let image = h.render().unwrap();
+            assert_ne!(image.get_pixel(next.x as u32, next.y as u32).0, before, "{tool:?} flip={flip}: move visible in its own frame");
+            if tool == Tool::MixerBrush
+                && !flip
+                && let Ok(path) = std::env::var("PHOTOCRAFT_TEST_SNAPSHOT")
+            {
+                image.save(path).unwrap();
+            }
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: next,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            assert!(!h.state().ui.status_error, "{}", h.state().ui.status);
+            assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some(if tool == Tool::MixerBrush { "Mixer Brush" } else { "Brush Tool" }));
+        }
+    }
+}
+
 fn harness() -> Option<Harness> {
     let built = std::panic::catch_unwind(|| {
         egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 640.0)).with_pixels_per_point(1.0).with_max_steps(64).wgpu().build_eframe(|cc| {
