@@ -3995,6 +3995,7 @@ curves	Smooth	Vloeiend maken
 	Increase Brush Size	Penseelgrootte vergroten
 	Decrease Brush Hardness	Penseelhardheid verlagen
 	Increase Brush Hardness	Penseelhardheid verhogen
+	Collapse Layer Effects on Open	Laageffecten inklappen bij openen
 	Memory Usage	Geheugengebruik
 	Per-document RAM limit (MB)	RAM-limiet per document (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	Geïnstalleerd RAM: {ram} MB; deze limiet: {percent}%

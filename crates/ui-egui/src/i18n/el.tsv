@@ -3935,6 +3935,7 @@ curves	Smooth	Εξομάλυνση
 	Increase Brush Size	Αύξηση μεγέθους πινέλου
 	Decrease Brush Hardness	Μείωση σκληρότητας πινέλου
 	Increase Brush Hardness	Αύξηση σκληρότητας πινέλου
+	Collapse Layer Effects on Open	Σύμπτυξη εφέ επιπέδων κατά το άνοιγμα
 	Memory Usage	Χρήση μνήμης
 	Per-document RAM limit (MB)	Όριο RAM ανά έγγραφο (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	Εγκατεστημένη RAM: {ram} MB· αυτό το όριο: {percent}%

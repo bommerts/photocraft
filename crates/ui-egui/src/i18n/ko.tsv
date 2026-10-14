@@ -3416,6 +3416,7 @@ curves	Smooth	매끄럽게
 	Increase Brush Size	브러시 크기 늘리기
 	Decrease Brush Hardness	브러시 경도 줄이기
 	Increase Brush Hardness	브러시 경도 늘리기
+	Collapse Layer Effects on Open	열 때 레이어 효과 접기
 	Memory Usage	메모리 사용량
 	Per-document RAM limit (MB)	문서당 RAM 한도(MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	설치된 RAM: {ram} MB; 이 한도: {percent}%

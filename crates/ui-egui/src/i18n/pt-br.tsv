@@ -4025,6 +4025,7 @@ layerLabel	No Color	Sem cor
 	Increase Brush Size	Aumentar tamanho do pincel
 	Decrease Brush Hardness	Diminuir dureza do pincel
 	Increase Brush Hardness	Aumentar dureza do pincel
+	Collapse Layer Effects on Open	Recolher efeitos de camada ao abrir
 	Memory Usage	Uso de memória
 	Per-document RAM limit (MB)	Limite de RAM por documento (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	RAM instalada: {ram} MB; este limite: {percent}%

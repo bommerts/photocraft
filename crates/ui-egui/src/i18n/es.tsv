@@ -4197,6 +4197,7 @@ navigator	Zoom	Zoom
 	Increase Brush Size	Aumentar tamaño del pincel
 	Decrease Brush Hardness	Reducir dureza del pincel
 	Increase Brush Hardness	Aumentar dureza del pincel
+	Collapse Layer Effects on Open	Contraer efectos de capa al abrir
 	Memory Usage	Uso de memoria
 	Per-document RAM limit (MB)	Límite de RAM por documento (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	RAM instalada: {ram} MB; este límite: {percent}%

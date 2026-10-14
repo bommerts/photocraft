@@ -2858,6 +2858,7 @@ curves	Smooth	平滑
 	Increase Brush Size	增大画笔大小
 	Decrease Brush Hardness	减小画笔硬度
 	Increase Brush Hardness	增大画笔硬度
+	Collapse Layer Effects on Open	打开文档时折叠图层效果
 	Memory Usage	内存使用
 	Per-document RAM limit (MB)	每个文档的 RAM 上限 (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	已安装 RAM：{ram} MB；此上限：{percent}%

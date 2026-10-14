@@ -4154,6 +4154,7 @@ cameraRaw	Yellow	Sárga
 	Increase Brush Size	Ecsetméret növelése
 	Decrease Brush Hardness	Ecsetkeménység csökkentése
 	Increase Brush Hardness	Ecsetkeménység növelése
+	Collapse Layer Effects on Open	Rétegeffektusok összecsukása megnyitáskor
 	Memory Usage	Memóriahasználat
 	Per-document RAM limit (MB)	Dokumentumonkénti RAM-korlát (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	Telepített RAM: {ram} MB; ez a korlát: {percent}%

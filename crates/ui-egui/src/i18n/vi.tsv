@@ -3722,6 +3722,7 @@ curves	Smooth	Làm mượt
 	Increase Brush Size	Tăng kích thước cọ
 	Decrease Brush Hardness	Giảm độ cứng của cọ
 	Increase Brush Hardness	Tăng độ cứng của cọ
+	Collapse Layer Effects on Open	Thu gọn hiệu ứng lớp khi mở
 	Memory Usage	Sử dụng bộ nhớ
 	Per-document RAM limit (MB)	Giới hạn RAM mỗi tài liệu (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	RAM đã cài: {ram} MB; giới hạn này: {percent}%

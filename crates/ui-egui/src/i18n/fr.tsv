@@ -3243,6 +3243,7 @@ curves	Smooth	Lisser
 	Increase Brush Size	Augmenter la taille du pinceau
 	Decrease Brush Hardness	Réduire la dureté du pinceau
 	Increase Brush Hardness	Augmenter la dureté du pinceau
+	Collapse Layer Effects on Open	Réduire les effets de calque à l’ouverture
 	Memory Usage	Utilisation de la mémoire
 	Per-document RAM limit (MB)	Limite RAM par document (Mo)
 	Installed RAM: {ram} MB; this limit: {percent}%	RAM installée : {ram} Mo ; cette limite : {percent}%

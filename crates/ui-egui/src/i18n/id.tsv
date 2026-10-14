@@ -3230,6 +3230,7 @@ curves	Smooth	Haluskan
 	Increase Brush Size	Perbesar ukuran kuas
 	Decrease Brush Hardness	Kurangi kekerasan kuas
 	Increase Brush Hardness	Tambah kekerasan kuas
+	Collapse Layer Effects on Open	Ciutkan efek lapisan saat membuka
 	Memory Usage	Penggunaan memori
 	Per-document RAM limit (MB)	Batas RAM per dokumen (MB)
 	Installed RAM: {ram} MB; this limit: {percent}%	RAM terpasang: {ram} MB; batas ini: {percent}%
