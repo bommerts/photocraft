@@ -91,6 +91,27 @@ fn radial_blur_quality_defaults_for_older_serialized_parameters() {
 }
 
 #[test]
+fn nonpositive_tile_sizes_match_one_pixel_tiles() {
+    let area = Rect::new(0, 0, 4, 3);
+    for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        let source = pattern(depth, area);
+        for params in all_filters().into_iter().chain([FilterParams::ShapeBlur { radius: 3.0, shape: BlurShape::Star }]) {
+            let expected = apply_tiled(&source, &params, area, area, None, 1, Some(area));
+            for tile in [0, -64, i32::MIN] {
+                let actual = apply_tiled(&source, &params, area, area, None, tile, Some(area));
+                assert_eq!(actual.read_region(area), expected.read_region(area), "{}: {depth:?}, tile={tile}", params.label());
+                let cancellable = apply_tiled_with(&source, &params, area, area, None, tile, Some(area), &photocraft_raster::Interrupt::NONE)
+                    .expect("a nonpositive tile size is normalized, not rejected");
+                assert_eq!(cancellable.read_region(area), expected.read_region(area), "{}: {depth:?}, tile={tile}", params.label());
+                let cancelled = photocraft_raster::Interrupt::cancel_only(&|| true);
+                assert!(apply_tiled_with(&source, &params, area, area, None, tile, Some(area), &cancelled).is_none());
+            }
+        }
+        assert_eq!(source.read_region(area), pattern(depth, area).read_region(area));
+    }
+}
+
+#[test]
 fn every_filter_is_tile_independent() {
     let s = pattern(SampleType::U8, R);
     for p in all_filters() {
