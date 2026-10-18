@@ -3646,6 +3646,22 @@ cameraData	Lens	レンズ
 	Snap to Origin	原点にスナップ
 	Search settings…	設定を検索…
 	No matching settings	一致する設定はありません
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	サンプリングブラシツール
+	Sampling Area Overlay	サンプリング領域のオーバーレイ
+	Show Sampling Area	サンプリング領域を表示
+	Indicates	表示対象
+	Sampling Area	サンプリング領域
+	Excluded Area	除外された領域
+	Sampling Area Options	サンプリング領域オプション
+	Rectangular	長方形
+	Fill Settings	塗りつぶし設定
+	Rotation Adaptation	回転への適応
+	Very High	非常に高い
+	Full	フル
+	Mirror	ミラー
+	Output Settings	出力設定
+	Output To	出力先
 	Loading fonts…	フォントを読み込み中…
 	Response curve	応答カーブ
 	Simulate Pressure	筆圧をシミュレート
@@ -3887,3 +3903,7 @@ curves	Smooth	スムーズ
 	Replace	置き換え
 	{name} was changed by another app after it was opened or saved here.	{name} は、ここで開くか保存した後に別のアプリで変更されました。
 	Replace it with this document, or cancel and use File › Save As to keep both.	この書類で置き換えるか、キャンセルしてファイル › 名前を付けて保存で両方を残してください。
+	Decrease Brush Size	ブラシサイズを小さく
+	Increase Brush Size	ブラシサイズを大きく
+	Decrease Brush Hardness	ブラシの硬さを下げる
+	Increase Brush Hardness	ブラシの硬さを上げる

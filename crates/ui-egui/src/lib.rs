@@ -38,6 +38,7 @@ pub mod brush_preview;
 pub mod brush_resize;
 pub mod brush_sections;
 pub mod brushes_tab;
+pub mod caf_ui;
 pub(crate) mod cam_preview;
 mod cam_transform;
 mod camera_raw_detail_ui;
@@ -283,6 +284,9 @@ pub struct ExportSettings {
     /// Embed EXIF, resolution and other non-XMP metadata when the format supports it. Export As
     /// turns this off for Metadata: None; Save As leaves it on.
     pub embed_metadata: bool,
+    /// The path of the document's own file, which linked smart objects that PSD/PSB embed are
+    /// resolved against ([`photocraft_io::ExportOptions::document_path`]).
+    pub document_path: Option<std::path::PathBuf>,
 }
 
 impl Default for ExportSettings {
@@ -298,6 +302,7 @@ impl Default for ExportSettings {
             psd_maximize_compatibility: true,
             embed_icc: true,
             embed_metadata: true,
+            document_path: None,
         }
     }
 }
@@ -321,6 +326,7 @@ impl ExportSettings {
         opts.tga_bits = self.tga_bits;
         opts.image_previews = self.image_previews;
         opts.psd_maximize_compatibility = self.psd_maximize_compatibility;
+        opts.document_path = self.document_path.clone();
         opts
     }
 }
@@ -364,6 +370,13 @@ pub type FileStampFn = Box<dyn Fn(&str) -> Option<FileStamp>>;
 /// warnings. Runs on a worker thread (see [`Services::save_file`]). It must call
 /// [`jobs_ui::SaveCtl::commit`] right before replacing the file, and write nothing if that fails.
 pub type SaveFileFn = std::sync::Arc<dyn Fn(&Document, &str, &ExportSettings, &jobs_ui::SaveCtl) -> Result<Vec<String>, String> + Send + Sync>;
+
+/// The revision a document counts as saved at after `written` went to its writer: that one when
+/// the writer confirms the bytes were stored, else still `previous`, so the document stays
+/// unsaved. A browser download is only a request the user can cancel (#4962).
+pub(crate) fn saved_revision_after_write(confirmed: bool, written: u64, previous: u64) -> u64 {
+    if confirmed { written } else { previous }
+}
 
 /// Who a finished save serves.
 #[derive(Clone, Copy)]
@@ -460,6 +473,10 @@ pub struct Services {
     /// Size and modification time of a file (native); `None` on the web, where Save never
     /// writes back to a file.
     pub file_stamp: Option<FileStampFn>,
+    /// `write` only asks for the bytes to be kept (a browser download, which the user can
+    /// cancel and which reports nothing back), so a save through it names the document but
+    /// leaves its changes unsaved and the leave-page guard armed (#4962).
+    pub write_unconfirmed: bool,
     /// Encode and write in one step on a worker thread, so a large save doesn't freeze the
     /// window (#2017). With background jobs on, saves use it instead of `export` and `write`.
     pub save_file: Option<SaveFileFn>,
@@ -480,8 +497,13 @@ pub struct Services {
     /// Preferences ▸ General ▸ Beep When Done: the platform's default beep, played when a
     /// background job finishes successfully. `None` in the web build (and in tests).
     pub beep: Option<fn()>,
-    /// Files delivered asynchronously (web drag-and-drop): drained every frame.
+    /// Files delivered asynchronously (web drag-and-drop): drained every frame and opened as
+    /// documents.
     pub inbox: Option<Inbox>,
+    /// Files delivered asynchronously for a drop onto the active document's canvas (web
+    /// drag-and-drop, routed by [`PhotocraftApp::dropped_on_canvas`]): placed as layers like a
+    /// desktop canvas drop (Place Embedded, each in Free Transform).
+    pub place_inbox: Option<Inbox>,
     /// OS clipboard images: copies go out, screenshots and images from other apps come in.
     pub clipboard_set_image: Option<ClipboardSetFn>,
     pub clipboard_get_image: Option<ClipboardGetFn>,
@@ -508,8 +530,9 @@ pub struct Services {
     pub append_text: Option<AppendTextFn>,
     /// OS requests (macOS open-documents / quit Apple events), polled every frame.
     pub os_events: Option<OsEventsFn>,
-    /// The pointer position read from the OS (desktop): winit 0.30's file drops carry none, and
-    /// the window gets no pointer events during an OS drag (see `file_open::DropTarget`).
+    /// The pointer position read from the OS (desktop) or from the page's drag events (web):
+    /// file drops carry none, and the window gets no pointer events during an OS drag (see
+    /// `file_open::DropTarget`).
     pub cursor_pos: Option<CursorPosFn>,
     /// Caps Lock toggled on (desktop; `None` on Wayland and the web). Read once per frame, so
     /// the canvas can show the precise crosshair for painting tools, whatever the preference.
@@ -656,6 +679,9 @@ pub struct PhotocraftApp {
     fonts_ready: bool,
     /// Screen rect of the main canvas last frame (for overlays and the navigator).
     pub last_canvas_rect: egui::Rect,
+    /// Window › Arrange: the first document of the shown run of tiles, when there are more
+    /// documents than tiles (`canvas::arranged_cells`).
+    pub(crate) arrange_start: usize,
     /// Physical pixels per egui point of the canvas last frame (`ctx.pixels_per_point`, which
     /// folds in both the display scale and Interface › UI Scale). The canvas maps document pixels
     /// to physical pixels, so point-space geometry divides the view zoom by this (see
@@ -667,7 +693,7 @@ pub struct PhotocraftApp {
     /// The document tab strip last frame: a drop there opens the file at the slot under it.
     pub(crate) tab_strip: Option<canvas::TabStrip>,
     /// Files dropped on the canvas still to place, one Free Transform at a time.
-    pub(crate) drop_places: std::collections::VecDeque<egui::DroppedFileHandle>,
+    pub(crate) drop_places: std::collections::VecDeque<file_open::DropPlace>,
     /// The document each of `ui.views` belongs to, as of the last [`Self::sync_views`].
     view_docs: Vec<DocId>,
     pub fps: f32,
@@ -698,6 +724,9 @@ pub struct PhotocraftApp {
     pub(crate) color_range: Option<color_range_ui::Preview>,
     /// Image › Adjustments dialog preview through a temporary clipped adjustment layer.
     pub(crate) adjust_preview: Option<adjust_preview::AdjustPreview>,
+    /// The Properties panel's live adjustment-layer drag: its damage region and coverage
+    /// (`adjust_preview::live_key`).
+    pub(crate) live_adjust_preview: Option<adjust_preview::LiveAdjust>,
     /// Synthetic input events queued by automation (`ui.click`, `ui.key`, …), injected next frame.
     pub(crate) synthetic: Vec<egui::Event>,
     /// True only while a frame is processing synthetic automation input. It
@@ -884,6 +913,7 @@ impl PhotocraftApp {
             last_window_title: String::new(),
             fonts_ready: false,
             last_canvas_rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            arrange_start: 0,
             ppp: 1.0,
             drop_canvas_rect: None,
             tab_strip: None,
@@ -905,6 +935,7 @@ impl PhotocraftApp {
             redraws: Default::default(),
             color_range: None,
             adjust_preview: None,
+            live_adjust_preview: None,
             synthetic: Vec::new(),
             automation_input: false,
             channel_thumbs: None,
@@ -1574,6 +1605,7 @@ impl PhotocraftApp {
             settings.jpeg_quality = e.jpeg_quality.map(|q| q.clamp(1, 100));
             settings.webp_lossless = e.webp_lossless.unwrap_or(settings.webp_lossless);
             settings.webp_quality = e.webp_quality.map(|q| q.min(100));
+            settings.document_path = st.path.as_deref().map(std::path::PathBuf::from);
         }
         settings
     }
@@ -1617,11 +1649,12 @@ impl PhotocraftApp {
             return jobs_ui::start_save(self, path, settings.clone(), copy, save, false);
         }
         let st = self.session.active().ok_or("no document")?;
-        let (doc, revision) = (st.doc.id, st.revision);
+        let (doc, written, previous) = (st.doc.id, st.revision, st.saved_revision);
         let export = self.services.export.as_ref().ok_or("no exporter configured")?;
         let (bytes, warnings) = export(&st.doc, &path, settings)?;
         let write = self.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
+        let revision = saved_revision_after_write(!self.services.write_unconfirmed, written, previous);
         self.saved(doc, revision, &path, &warnings, copy);
         Ok(Some((path, warnings)))
     }
@@ -1911,6 +1944,10 @@ impl eframe::App for PhotocraftApp {
                 self.open_failed(&name, &e);
             }
         }
+        // Web drops onto the canvas, read since the last frame: placed below, one at a time.
+        let to_place: Vec<(String, Vec<u8>)> =
+            self.services.place_inbox.as_ref().map(|q| std::mem::take(&mut *q.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default();
+        self.drop_places.extend(to_place.into_iter().map(|(name, bytes)| file_open::DropPlace::Bytes(name, bytes)));
         // Finder double-click / Open With / Dock drops (macOS open-documents events).
         self.drain_os_events(ctx);
         // While files are dragged over the window it gets no pointer events: keep frames coming so

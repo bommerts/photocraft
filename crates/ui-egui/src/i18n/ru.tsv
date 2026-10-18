@@ -2975,6 +2975,24 @@ cameraData	Lens	Объектив
 	Rasterize Layer Style	Растрировать стиль слоя
 	Search settings…	Поиск настроек…
 	No matching settings	Нет подходящих настроек
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Кисть области выборки
+	Sampling Area Overlay	Наложение области выборки
+	Show Sampling Area	Показать область выборки
+	Indicates	Обозначает
+	Sampling Area	Область выборки
+	Excluded Area	Исключённая область
+	Sampling Area Options	Параметры области выборки
+	Rectangular	Прямоугольная
+	Fill Settings	Параметры заливки
+	Rotation Adaptation	Адаптация поворота
+	Very High	Очень высокая
+	Full	Полная
+	Mirror	Отражение
+	Output Settings	Параметры вывода
+	Output To	Вывод в
+	Duplicate Layer	Дубликат слоя
+	Contract	Сжать
 	Loading fonts…	Загрузка шрифтов…
 	Response curve	Кривая отклика
 	Tool	Инструмент
@@ -3181,3 +3199,7 @@ curves	Smooth	Сгладить
 	Replace	Заменить
 	{name} was changed by another app after it was opened or saved here.	Файл {name} был изменён другим приложением после того, как его открыли или сохранили здесь.
 	Replace it with this document, or cancel and use File › Save As to keep both.	Замените его этим документом или отмените и используйте Файл › Сохранить как, чтобы сохранить оба.
+	Decrease Brush Size	Уменьшить размер кисти
+	Increase Brush Size	Увеличить размер кисти
+	Decrease Brush Hardness	Уменьшить жёсткость кисти
+	Increase Brush Hardness	Увеличить жёсткость кисти

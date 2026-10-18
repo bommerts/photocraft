@@ -3722,6 +3722,22 @@ cameraData	Lens	Об'єктив
 	Search settings…	Пошук налаштувань…
 	No matching settings	Немає відповідних налаштувань
 	PhotoCraft — Screen Color Picker	PhotoCraft — Піпетка кольору екрана
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Пензель області вибірки
+	Sampling Area Overlay	Накладання області вибірки
+	Show Sampling Area	Показати область вибірки
+	Indicates	Позначає
+	Sampling Area	Область вибірки
+	Excluded Area	Виключена область
+	Sampling Area Options	Параметри області вибірки
+	Rectangular	Прямокутна
+	Fill Settings	Параметри заливки
+	Rotation Adaptation	Адаптація повороту
+	Very High	Дуже висока
+	Full	Повна
+	Mirror	Віддзеркалення
+	Output Settings	Параметри виводу
+	Output To	Вивести в
 	Loading fonts…	Завантаження шрифтів…
 	Response curve	Крива відгуку
 	Simulate Pressure	Імітувати натиск
@@ -3910,3 +3926,15 @@ curves	Smooth	Згладити
 	Replace	Замінити
 	{name} was changed by another app after it was opened or saved here.	Файл {name} змінила інша програма після того, як його тут відкрили або зберегли.
 	Replace it with this document, or cancel and use File › Save As to keep both.	Замініть його цим документом або скасуйте й скористайтеся Файл › Зберегти як, щоб зберегти обидва.
+	Decrease Brush Size	Зменшити розмір пензля
+	Increase Brush Size	Збільшити розмір пензля
+	Decrease Brush Hardness	Зменшити жорсткість пензля
+	Increase Brush Hardness	Збільшити жорсткість пензля
+# Dynamic color-picker titles and warnings about losing editable layer content.
+	Color Picker (Background Color)	Вибір кольору (колір тла)
+	Color Picker (Foreground Color)	Вибір кольору (основний колір)
+	Color Picker (Custom Canvas Color)	Вибір кольору (власний колір полотна)
+	This type layer must be rasterized before proceeding. Its text will no longer be editable. Rasterize the type?	Щоб продовжити, потрібно растеризувати цей текстовий шар. Після цього його текст більше не можна буде редагувати. Растеризувати текст?
+	This shape layer must be rasterized before proceeding. It will no longer be editable as a shape. Rasterize the shape?	Щоб продовжити, потрібно растеризувати цей шар фігури. Після цього його більше не можна буде редагувати як фігуру. Растеризувати фігуру?
+	This Smart Object must be rasterized before proceeding. Its contents will no longer be editable. Rasterize the Smart Object?	Щоб продовжити, потрібно растеризувати цей смартоб’єкт. Після цього його вміст більше не можна буде редагувати. Растеризувати смартоб’єкт?
+	This fill layer must be rasterized before proceeding. Its fill content will no longer be editable. Rasterize the layer?	Щоб продовжити, потрібно растеризувати цей шар заливки. Після цього його заливку більше не можна буде редагувати. Растеризувати шар?

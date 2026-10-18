@@ -54,6 +54,18 @@ pub(crate) fn for_each_surface(layers: &mut [Layer], masks: bool, f: &mut dyn Fn
     }
 }
 
+/// Drops every fill cache of a layer tree. A fill layer covers the whole canvas, but its cache
+/// (the pixels a PSD stored) only the old one: after the canvas grows the fill must re-render
+/// from its model, or the added area stays transparent (#7362).
+fn drop_fill_caches(layers: &mut [Layer]) {
+    for l in layers {
+        l.fill_cache = None;
+        if let LayerContent::Group(g) = &mut l.content {
+            drop_fill_caches(&mut g.children);
+        }
+    }
+}
+
 /// Converts every pixel surface of a layer tree (masks included) to `depth`.
 pub(crate) fn convert_layers_depth(layers: &mut [Layer], depth: SampleType) {
     for_each_surface(layers, true, &mut |surf, _| {
@@ -171,6 +183,12 @@ fn image_size(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let (ow, oh) = (d.doc.size.width, d.doc.size.height);
     let resample = parse_resample(p.get("resample").and_then(Value::as_str).unwrap_or("bicubic"));
+    // An Indexed Color document holds only its colour table's colours, and a save quantises to
+    // them: interpolation showed blends that the saved file didn't have (#6019).
+    let resample = match resample {
+        Method::Filter(_) | Method::Automatic if d.doc.mode == ColorMode::Indexed => Method::Filter(Resample::Nearest),
+        m => m,
+    };
     let mut pw = p.get("width").and_then(Value::as_f64);
     let mut ph = p.get("height").and_then(Value::as_f64);
     // `percent` scales both sides (what a Photoshop action records as "200%"); an explicit side wins.
@@ -337,6 +355,9 @@ fn crop_doc(doc: &mut Document, cmd: &str, r: Rect, delete_pixels: bool, extensi
             surf.write_interleaved(keep, &saved);
         }
     }
+    if extends {
+        drop_fill_caches(&mut doc.layers);
+    }
     crate::canvas_geom::refresh(doc, crate::canvas_geom::Refresh::Shapes);
     Ok(())
 }
@@ -397,6 +418,9 @@ fn canvas_size(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Canvas Size", |doc, _| {
         translate_doc(doc, "image.canvasSize", dx, dy)?;
         doc.size = Size::new(nw, nh);
+        if nw > ow as u32 || nh > oh as u32 {
+            drop_fill_caches(&mut doc.layers);
+        }
         crate::canvas_geom::refresh(doc, crate::canvas_geom::Refresh::Shapes);
         let canvas = doc.bounds();
         let old = Rect::from_xywh(dx, dy, ow as u32, oh as u32);
@@ -935,6 +959,28 @@ mod tests {
             let Effect::DropShadow(sh) = &l.effects.items[0] else { panic!() };
             assert_eq!(sh.distance, 10.0);
             assert_eq!(l.mask.as_ref().unwrap().surface.default_pixel(), vec![1.0]);
+        }
+    }
+
+    /// #6019: Image Size on an Indexed Color document makes no colours the colour table doesn't have.
+    #[test]
+    fn image_size_resamples_indexed_color_with_nearest_neighbor() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 2, "height": 1})).unwrap();
+        s.execute("edit.fill", json!({"color": "#ff0000"})).unwrap();
+        s.execute("select.rect", json!({"x": 1, "y": 0, "width": 1, "height": 1})).unwrap();
+        s.execute("edit.fill", json!({"color": "#0000ff"})).unwrap();
+        s.execute("select.deselect", json!({})).unwrap();
+        s.execute("image.mode.indexedColor", json!({})).unwrap();
+        for resample in ["bicubic", "automatic", "bilinear", "lanczos", "preserveDetails"] {
+            s.execute("image.imageSize", json!({"width": 8, "resample": resample})).unwrap();
+            let st = s.active().unwrap();
+            let surf = st.doc.layers[0].surface().unwrap();
+            for x in 0..8 {
+                let px = surf.pixel(x, 0);
+                assert!(px[..3] == [1.0, 0.0, 0.0] || px[..3] == [0.0, 0.0, 1.0], "{resample}: no blended colour at x {x}: {px:?}");
+            }
+            s.execute("history.undo", json!({})).unwrap();
         }
     }
 

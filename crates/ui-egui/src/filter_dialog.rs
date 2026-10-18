@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use photocraft_doc::Document;
+use photocraft_engine::color_cmds::ColorSettings;
 use serde_json::{Map, Value, json};
 
 use crate::PhotocraftApp;
@@ -279,6 +280,9 @@ pub const PREVIEWED: &[&str] = &[
     "layer.matting.colorDecontaminate",
     "layer.layerStyle.scaleEffects",
     "type.warpText",
+    // The preview shows the image through the chosen profile, as Photoshop's Preview does.
+    "edit.assignProfile",
+    "edit.convertToProfile",
 ];
 
 pub fn has_dialog(command: &str) -> bool {
@@ -293,8 +297,6 @@ pub fn has_dialog(command: &str) -> bool {
             command,
             "image.trim"
                 | "select.refineEdge"
-                | "edit.assignProfile"
-                | "edit.convertToProfile"
                 | "view.proofSetup"
                 | "layer.layerStyle.globalLight"
                 | "image.mode.colorTable"
@@ -387,6 +389,11 @@ fn apply_command_defaults(app: &PhotocraftApp, command: &str, fields: &mut Map<S
     }
     if command == "edit.assignProfile" {
         assign_profile_defaults(app, fields);
+    }
+    // Photoshop's Replace Color opens with its sample eyedropper active (#6279): the first click
+    // on the image picks the colour.
+    if command == REPLACE_COLOR {
+        fields.insert(COLOR_EYEDROPPER.into(), json!(true));
     }
 }
 
@@ -556,6 +563,10 @@ pub(crate) fn source_label(key: &str) -> String {
     if key == "localized" {
         return "Localized Color Clusters".into();
     }
+    // Convert to Profile's, Proof Setup's…: spelled out, as in Photoshop (not "Bpc").
+    if key == "bpc" {
+        return "Black Point Compensation".into();
+    }
     // A name that already reads as text ("iPhone 14 Pro Max", "Web 1920") is not camelCase.
     if key.contains(' ') {
         return key.to_string();
@@ -607,6 +618,8 @@ fn uses_angle_dial(command: &str, key: &str) -> bool {
 /// eyedropper like Photoshop's. While armed, the next click on the image writes the merged
 /// composite colour into the `color` field (the same sampler the Color Picker uses).
 const REPLACE_COLOR: &str = "image.adjustments.replaceColor";
+/// What OK on an edited smart filter runs (`smart_ui::confirm_command`); its preview too.
+const SMART_FILTER_SET_PARAMS: &str = "layer.smartFilter.setParams";
 const COLOR_EYEDROPPER: &str = "__colorEyedropper";
 
 fn color_eyedropper_owns(f: &Map<String, Value>) -> bool {
@@ -635,6 +648,49 @@ pub(crate) fn color_eyedropper_sample(app: &mut PhotocraftApp, x: f64, y: f64) -
         d.fields.insert("points".into(), json!([[x.floor(), y.floor()]]));
     }
     true
+}
+
+/// The Color Picker of Replace Color's Result swatch writes here (#6278).
+const RESULT_PICKED: &str = "__resultPicked";
+/// The Result the picker opened on: a picked colour that differs from it sets the sliders.
+const RESULT_FROM: &str = "__resultFrom";
+
+/// Replace Color's Result swatch (#6278), as in Photoshop: the sampled colour after the Hue,
+/// Saturation and Lightness shift. Picking a Result in its Color Picker sets the three sliders so
+/// the sampled colour becomes it.
+fn replace_color_result(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+    use photocraft_algo::tone;
+    let t = Tokens::get(ui.ctx());
+    let from = f.get("color").and_then(Value::as_str).and_then(crate::color_picker_ui::parse_hex).unwrap_or([0.0; 3]);
+    let picked = f.get(RESULT_PICKED).and_then(Value::as_str).and_then(crate::color_picker_ui::parse_hex);
+    if let Some(to) = picked
+        && f.get(RESULT_PICKED) != f.get(RESULT_FROM)
+    {
+        let (hue, saturation, lightness) = tone::replace_color_shift(from, to);
+        for (key, v) in [("hue", hue), ("saturation", saturation), ("lightness", lightness)] {
+            f.insert(key.into(), json!(v.round()));
+        }
+        f.remove(RESULT_PICKED);
+        f.remove(RESULT_FROM);
+    }
+    let num = |key: &str| f.get(key).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+    let rgb = tone::replace_color_result(from, num("hue"), num("saturation"), num("lightness"));
+    let bytes = rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let name = tl!("Result");
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(name).color(t.text_dim));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            clicked = crate::widgets::color_swatch_button(ui, egui::Color32::from_rgb(bytes[0], bytes[1], bytes[2]), name).clicked();
+            ui.label(egui::RichText::new(crate::color_picker_ui::hex(rgb)).color(t.text_dim).monospace());
+        });
+    });
+    if clicked {
+        let hex = json!(crate::color_picker_ui::hex(rgb));
+        f.insert(RESULT_PICKED.into(), hex.clone());
+        f.insert(RESULT_FROM.into(), hex);
+        crate::color_picker_ui::request_field(f, RESULT_PICKED, &crate::color_picker_ui::title_for(name));
+    }
 }
 
 /// Dialog body for filter commands.
@@ -832,6 +888,9 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
             }
         }
     }
+    if cmd == REPLACE_COLOR {
+        replace_color_result(ui, f);
+    }
     // Read-only context the dialog opener supplies (e.g. the monitor profile in use).
     if let Some(note) = f.get("__note").and_then(Value::as_str) {
         ui.add_space(4.0);
@@ -875,12 +934,23 @@ pub fn preview_document_with(
     k: u32,
     cancel: Option<&photocraft_engine::jobs::JobCtx>,
 ) -> Option<Document> {
-    preview_document_for_target(doc, active, command, params, k, cancel, photocraft_engine::channel_cmds::ChannelTarget::Composite, &[])
+    preview_document_for_target(
+        doc,
+        active,
+        command,
+        params,
+        k,
+        cancel,
+        photocraft_engine::channel_cmds::ChannelTarget::Composite,
+        &[],
+        &ColorSettings::default(),
+    )
 }
 
 /// Run the preview with the same pixel target as the final command, including individual channels.
 /// `documents` are the open documents in session order: document params (Match Color's Source,
-/// Displace's map) index into them.
+/// Displace's map) index into them. `color` is the app's Edit › Color Settings: Assign and Convert
+/// to Profile's `working` is the working space chosen there, not the built-in default.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn preview_document_for_target(
     doc: &Document,
@@ -891,15 +961,18 @@ pub(crate) fn preview_document_for_target(
     cancel: Option<&photocraft_engine::jobs::JobCtx>,
     target: photocraft_engine::channel_cmds::ChannelTarget,
     documents: &[Arc<Document>],
+    color: &ColorSettings,
 ) -> Option<Document> {
     if command == crate::select_mask_view::COMMAND {
         return crate::select_mask_view::preview_document(doc, active, params, k, cancel);
     }
     // Warp Text renders the type again from the layer model (font size, position), which a
-    // reduced proxy doesn't scale: it runs at full size and the result is reduced (#218).
-    let (run_k, reduce_k) = if command == "type.warpText" { (1, k) } else { (k, 1) };
+    // reduced proxy doesn't scale: it runs at full size and the result is reduced (#218). So does
+    // a smart filter being edited: the smart object renders again from its source (#6324).
+    let (run_k, reduce_k) = if command == "type.warpText" || command == SMART_FILTER_SET_PARAMS { (1, k) } else { (k, 1) };
     let proxy = crate::proxy::proxy_document(doc, run_k);
     let mut s = photocraft_engine::Session::new();
+    s.color.settings = color.clone();
     s.set_inline_job_ctx(cancel.cloned());
     let doc_id = proxy.id;
     s.add_document(proxy, None);
@@ -1048,6 +1121,16 @@ mod tests {
         assert_eq!(source_label("iPhone 14 Pro Max"), "iPhone 14 Pro Max");
         assert_eq!(source_label("Web 1920"), "Web 1920");
         assert_eq!(source_label("centerX"), "Center X");
+    }
+
+    /// Convert to Profile's and Proof Setup's `bpc` read "Bpc": spelled out, and translated.
+    #[test]
+    fn black_point_compensation_is_spelled_out() {
+        assert_eq!(source_label("bpc"), "Black Point Compensation");
+        // English is the source: it has no catalog.
+        for lang in crate::i18n::Lang::all().filter(|l| l.code() != "en") {
+            assert!(crate::i18n::has(lang, "Black Point Compensation"), "{lang:?}");
+        }
     }
 
     fn key() -> FilterPreviewKey {
@@ -1569,6 +1652,7 @@ mod tests {
                 None,
                 photocraft_engine::channel_cmds::ChannelTarget::Composite,
                 &documents,
+                &ColorSettings::default(),
             )
             .unwrap_or_else(|| panic!("{label}: no preview"));
             let got = preview.layers[0].surface().unwrap().pixel(24, 16);
@@ -1584,6 +1668,7 @@ mod tests {
             None,
             photocraft_engine::channel_cmds::ChannelTarget::Composite,
             &documents,
+            &ColorSettings::default(),
         )
         .unwrap();
         let px = preview.layers[0].surface().unwrap().pixel(12, 8);
@@ -2347,8 +2432,7 @@ mod tests {
         app.run("tools.setColors", json!({"foreground": "#ff0000"})).unwrap();
         let id = open(&mut app, REPLACE_COLOR).unwrap();
         assert_eq!(app.ui.dialogs.last().unwrap().fields["color"], json!("#ff0000"), "the dialog starts from the foreground colour");
-        assert!(!color_eyedropper_armed(&app));
-        app.ui.dialog_mut(id).unwrap().fields.insert(COLOR_EYEDROPPER.into(), json!(true));
+        // #6279: armed as it opens, so the first click on the image samples.
         assert!(color_eyedropper_armed(&app));
         assert!(color_eyedropper_sample(&mut app, 4.0, 4.0));
         assert_eq!(app.ui.dialogs.last().unwrap().fields["color"], json!("#00ff00"));
@@ -2364,7 +2448,7 @@ mod tests {
         assert!(!color_eyedropper_sample(&mut app, 4.0, 4.0));
     }
 
-    /// #4143: the eyedropper button arms and disarms the canvas picker.
+    /// #4143: the eyedropper button disarms and re-arms the canvas picker (#6279: it opens armed).
     #[test]
     fn replace_color_dialog_arms_the_eyedropper_button() {
         use egui_kittest::Harness;
@@ -2377,12 +2461,52 @@ mod tests {
         PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
         open(h.state_mut(), REPLACE_COLOR).unwrap();
         h.run_steps(3);
-        h.get_by_label("Pick Color From Image").click();
-        h.run_steps(2);
-        assert!(color_eyedropper_armed(h.state()));
+        assert!(color_eyedropper_armed(h.state()), "armed as the dialog opens");
         h.get_by_label("Pick Color From Image").click();
         h.run_steps(2);
         assert!(!color_eyedropper_armed(h.state()));
+        h.get_by_label("Pick Color From Image").click();
+        h.run_steps(2);
+        assert!(color_eyedropper_armed(h.state()));
+    }
+
+    /// #6278: the Result swatch shows the sampled colour after the shift, and a colour picked for
+    /// it sets Hue, Saturation and Lightness so the sampled colour becomes it.
+    #[test]
+    fn replace_color_result_swatch_sets_the_sliders() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut s = photocraft_engine::Session::new();
+        s.execute("file.new", json!({"width": 16, "height": 16})).unwrap();
+        let mut app = PhotocraftApp::new(s, crate::Services::default());
+        app.run("tools.setColors", json!({"foreground": "#cc3333"})).unwrap();
+        let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), &mut app);
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        let id = open(h.state_mut(), REPLACE_COLOR).unwrap();
+        h.run_steps(3);
+        // No shift yet: the Result is the sampled colour.
+        assert_eq!(h.get_all_by_label("#cc3333").count(), 2, "the sampled colour and the Result both read #cc3333");
+        h.get_by_role_and_label(egui::accesskit::Role::ColorWell, "Result").click();
+        h.run_steps(3);
+        let picker = h.state().ui.dialogs.last().unwrap();
+        assert_ne!(picker.id, id, "the Color Picker opened over the dialog");
+        assert_eq!(picker.fields["color"], json!("#cc3333"), "on the current Result");
+        let picker = picker.id;
+        h.state_mut().ui.dialog_mut(picker).unwrap().fields.insert("color".into(), json!("#3355cc"));
+        crate::dialogs::confirm(h.state_mut(), picker).unwrap();
+        h.state_mut().ui.dialogs.retain(|d| d.id != picker);
+        h.run_steps(3);
+        let f = h.state_mut().ui.dialog_mut(id).unwrap().fields.clone();
+        let n = |k: &str| f[k].as_f64().unwrap() as f32;
+        let got = photocraft_algo::tone::replace_color_result([0.8, 0.2, 0.2], n("hue"), n("saturation"), n("lightness"));
+        let want = crate::color_picker_ui::parse_hex("#3355cc").unwrap();
+        assert!(got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02), "the sliders turn the sampled colour into the pick: {got:?}");
+        assert!(n("hue") != 0.0, "the hue moved");
+        // Moving a slider afterwards is not mistaken for another pick.
+        h.state_mut().ui.dialog_mut(id).unwrap().fields.insert("lightness".into(), json!(10.0));
+        h.run_steps(2);
+        assert_eq!(h.state_mut().ui.dialog_mut(id).unwrap().fields["lightness"], json!(10.0));
     }
 
     /// #4457: Localized Color Clusters and its Range, as in Photoshop's dialog; the sampled point

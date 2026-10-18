@@ -3731,6 +3731,22 @@ cameraData	Lens	Φακός
 	Snap to Origin	Προσκόλληση στην αρχή
 	Search settings…	Αναζήτηση ρυθμίσεων…
 	No matching settings	Δεν βρέθηκαν ρυθμίσεις
+# Edit › Content-Aware Fill workspace
+	Sampling Brush Tool	Εργαλείο πινέλου δειγματοληψίας
+	Sampling Area Overlay	Επικάλυψη περιοχής δειγματοληψίας
+	Show Sampling Area	Εμφάνιση περιοχής δειγματοληψίας
+	Indicates	Υποδεικνύει
+	Sampling Area	Περιοχή δειγματοληψίας
+	Excluded Area	Εξαιρούμενη περιοχή
+	Sampling Area Options	Επιλογές περιοχής δειγματοληψίας
+	Rectangular	Ορθογώνια
+	Fill Settings	Ρυθμίσεις γεμίσματος
+	Rotation Adaptation	Προσαρμογή περιστροφής
+	Very High	Πολύ υψηλή
+	Full	Πλήρης
+	Mirror	Κατοπτρισμός
+	Output Settings	Ρυθμίσεις εξόδου
+	Output To	Έξοδος σε
 	Loading fonts…	Φόρτωση γραμματοσειρών…
 	Response curve	Καμπύλη απόκρισης
 	Simulate Pressure	Προσομοίωση πίεσης
@@ -3910,3 +3926,7 @@ curves	Smooth	Εξομάλυνση
 	GPU Memory (MB, 0 = Automatic)	Μνήμη GPU (MB, 0 = Αυτόματο)
 	{name} was changed by another app after it was opened or saved here.	Το {name} άλλαξε από άλλη εφαρμογή αφού ανοίχτηκε ή αποθηκεύτηκε εδώ.
 	Replace it with this document, or cancel and use File › Save As to keep both.	Αντικαταστήστε το με αυτό το έγγραφο ή ακυρώστε και χρησιμοποιήστε Αρχείο › Αποθήκευση ως για να κρατήσετε και τα δύο.
+	Decrease Brush Size	Μείωση μεγέθους πινέλου
+	Increase Brush Size	Αύξηση μεγέθους πινέλου
+	Decrease Brush Hardness	Μείωση σκληρότητας πινέλου
+	Increase Brush Hardness	Αύξηση σκληρότητας πινέλου

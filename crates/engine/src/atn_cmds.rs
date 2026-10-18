@@ -1577,7 +1577,12 @@ fn close_from(d: &Descriptor) -> Mapped {
     if get_enum(d, "Svng").as_deref() == Some("Ys") { steps(vec![("file.save", json!({})), ("file.close", json!({}))]) } else { none("file.close") }
 }
 
-fn close_to(_: &str, _: &Value) -> Option<Descriptor> {
+/// A Close of an explicit document has no mapping here: written as a plain Close it would
+/// close the active document on playback, so it is left to `skipUnsupported`.
+fn close_to(_: &str, p: &Value) -> Option<Descriptor> {
+    if p.get("document").is_some_and(|d| !d.is_null()) {
+        return None;
+    }
     Some(desc("null").with("Svng", enm("YsN ", "N   ")))
 }
 
@@ -1608,14 +1613,17 @@ fn transform_from(d: &Descriptor) -> Mapped {
     if d.get("Skew").is_some() || d.get("Usng").is_some() {
         return unsupported;
     }
-    let geometry_only = p.keys().all(|k| k == "dx" || k == "dy");
+    // A whole-pixel move is a plain `layer.translate`; a fractional one needs `edit.transform`
+    // to keep its sub-pixel placement and interpolation.
+    let whole_pixels = ["dx", "dy"].iter().all(|k| p.get(*k).and_then(Value::as_f64).is_none_or(|v| v.fract() == 0.0));
+    let geometry_only = p.keys().all(|k| k == "dx" || k == "dy") && whole_pixels;
     match (ref_class(r).as_deref(), target(r)) {
         (Some("Chnl"), Target::Property(prop)) if prop == "fsel" => step("select.transformSelection", Value::Object(p)),
         (Some("Lyr"), _) => {
             let Some(mut lp) = layer_target(r) else { return unsupported };
             if geometry_only {
-                lp.insert("dx".into(), p.get("dx").and_then(Value::as_f64).unwrap_or(0.0).round().into());
-                lp.insert("dy".into(), p.get("dy").and_then(Value::as_f64).unwrap_or(0.0).round().into());
+                lp.insert("dx".into(), p.get("dx").and_then(Value::as_f64).unwrap_or(0.0).into());
+                lp.insert("dy".into(), p.get("dy").and_then(Value::as_f64).unwrap_or(0.0).into());
                 return step("layer.translate", Value::Object(lp));
             }
             lp.extend(p);
@@ -1986,6 +1994,10 @@ fn fill_from(d: &Descriptor) -> Mapped {
         match get_enum(d, "Usng").as_deref() {
             Some("FrgC") | None => {}
             Some("Pttn") => p["contents"] = json!("pattern"),
+            Some("Clr") => match get_obj(d, "Clr ").and_then(color_hex) {
+                Some(c) => p["color"] = json!(c),
+                None => return Mapped::Unsupported { harmless: false },
+            },
             Some(_) => return Mapped::Unsupported { harmless: false },
         }
         if let Some(t) = get_num(d, "Tlrn") {
@@ -2032,7 +2044,16 @@ fn fill_to(id: &str, p: &Value) -> Option<Descriptor> {
     if id == "paint.bucket" {
         let mut d = desc("null").with("From", D::Descriptor(desc("Pnt ").with("Hrzn", px(jnum(p, "x")?)).with("Vrtc", px(jnum(p, "y")?))));
         d = d.with("Tlrn", long(jnum(p, "tolerance").unwrap_or(32.0))).with("AntA", D::Boolean(jbool(p, "antiAlias").unwrap_or(true)));
-        d = d.with("Usng", enm("FlCn", if jstr(p, "contents") == Some("pattern") { "Pttn" } else { "FrgC" }));
+        // `source` is the command's older name for `contents`.
+        d = if p.get("contents").or_else(|| p.get("source")).and_then(Value::as_str) == Some("pattern") {
+            d.with("Usng", enm("FlCn", "Pttn"))
+        } else {
+            // An explicit colour overrides the foreground (#7199): it travels as Fill's `Clr `.
+            match bucket_color(p.get("color"))? {
+                Some(c) => d.with("Usng", enm("FlCn", "Clr ")).with("Clr ", D::Descriptor(c)),
+                None => d.with("Usng", enm("FlCn", "FrgC")),
+            }
+        };
         if let Some(o) = jnum(p, "opacity") {
             d = d.with("Opct", pct(o));
         }
@@ -2052,6 +2073,29 @@ fn fill_to(id: &str, p: &Value) -> Option<Descriptor> {
         d = d.with("PrsT", D::Boolean(t));
     }
     Some(d)
+}
+
+/// The Paint Bucket's `color` as `paint.bucket` reads it (`[r, g, b(, a)]` in 0..=1 or
+/// `#rrggbb(aa)`): `Some(None)` when it fills with the foreground (no colour, or a string the
+/// command doesn't read), `None` when the colour can't be written (not opaque, or outside 0..=1).
+fn bucket_color(v: Option<&Value>) -> Option<Option<Descriptor>> {
+    let rgba = match v {
+        Some(Value::Array(a)) if a.len() >= 3 => {
+            let c: Vec<f64> = a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect();
+            [*c.first()?, *c.get(1)?, *c.get(2)?, c.get(3).copied().unwrap_or(1.0)]
+        }
+        Some(Value::String(h)) => {
+            let h = h.trim_start_matches('#');
+            let c = |i: usize| h.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).map(|v| f64::from(v) / 255.0);
+            let (Some(r), Some(g), Some(b)) = (c(0), c(2), c(4)) else { return Some(None) };
+            [r, g, b, c(6).unwrap_or(1.0)]
+        }
+        _ => return Some(None),
+    };
+    if rgba[3] != 1.0 || !rgba.iter().all(|v| (0.0..=1.0).contains(v)) {
+        return None;
+    }
+    Some(Some(desc("RGBC").with("Rd  ", D::Double(rgba[0] * 255.0)).with("Grn ", D::Double(rgba[1] * 255.0)).with("Bl  ", D::Double(rgba[2] * 255.0))))
 }
 
 const STROKE: &[F] = &[
@@ -3223,7 +3267,8 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn write_file(path: &str, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)
+    // Atomic replacement (temporary file + rename): a failed write keeps the previous ATN (#7290).
+    photocraft_format::atomic_write(std::path::Path::new(path), bytes)
 }
 
 #[cfg(target_arch = "wasm32")]

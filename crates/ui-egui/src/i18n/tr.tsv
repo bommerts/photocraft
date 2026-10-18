@@ -3829,6 +3829,22 @@ cameraData	Lens	Lens
 @plural	{n} step|{n} steps	{n} adım
 @plural	{warning} (+{n} more brush preset warning)|{warning} (+{n} more brush preset warnings)	{warning} (+{n} fırça ön ayarı uyarısı daha)
 @plural	{what} with {n} warning|{what} with {n} warnings	{what}, {n} uyarı ile
+# Edit › Content-Aware Fill workspace
+	Excluded Area	Hariç Tutulan Alan
+	Fill Settings	Dolgu Ayarları
+	Full	Tam
+	Indicates	Gösterir
+	Mirror	Yansıt
+	Output Settings	Çıkış Ayarları
+	Output To	Çıkış Hedefi
+	Rectangular	Dikdörtgen
+	Rotation Adaptation	Döndürme Uyarlaması
+	Sampling Area	Örnekleme Alanı
+	Sampling Area Options	Örnekleme Alanı Seçenekleri
+	Sampling Area Overlay	Örnekleme Alanı Kaplaması
+	Sampling Brush Tool	Örnekleme Fırçası Aracı
+	Show Sampling Area	Örnekleme Alanını Göster
+	Very High	Çok Yüksek
 	Response curve	Yanıt eğrisi
 	Show home recent files	Ana ekranda son dosyaları göster
 	Clear Brush Controls	Fırça Denetimlerini Temizle
@@ -3940,3 +3956,7 @@ cameraData	Lens	Lens
 	GPU Memory (MB, 0 = Automatic)	GPU Belleği (MB, 0 = Otomatik)
 	{name} was changed by another app after it was opened or saved here.	{name}, burada açıldıktan veya kaydedildikten sonra başka bir uygulama tarafından değiştirildi.
 	Replace it with this document, or cancel and use File › Save As to keep both.	Bu belgeyle değiştirin ya da iptal edip ikisini de korumak için Dosya › Farklı Kaydet'i kullanın.
+	Decrease Brush Size	Fırça boyutunu küçült
+	Increase Brush Size	Fırça boyutunu büyüt
+	Decrease Brush Hardness	Fırça sertliğini azalt
+	Increase Brush Hardness	Fırça sertliğini artır

@@ -784,6 +784,7 @@ mod tests {
     /// now-existing folder and the original is put back, so both autosaves stay (#6412 review).
     #[test]
     fn a_launch_that_times_out_never_writes_where_a_move_removes() {
+        let _spawns = crate::no_child_spawns();
         let root = temp("recovery-timeout");
         let legacy = root.join("roaming").join("Recovery");
         autosave(&legacy, "old");
@@ -866,6 +867,7 @@ mod tests {
     /// once the lock is released, the move happens.
     #[test]
     fn a_move_waits_for_another_process_holding_the_lock() {
+        let _spawns = crate::no_child_spawns();
         let root = temp("recovery-lock");
         let legacy = root.join("roaming").join("Recovery");
         autosave(&legacy, "a");

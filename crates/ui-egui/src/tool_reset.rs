@@ -113,9 +113,32 @@ fn is_selection_tool(tool: Tool) -> bool {
 
 /// Put `tool`'s fields of `o` back to their defaults.
 pub fn reset_options(o: &mut ToolOptions, tool: Tool) {
-    let d = ToolOptions::default();
+    let keys = option_keys(tool);
+    if keys.is_empty() {
+        return;
+    }
+    let (Ok(Value::Object(mut cur)), Ok(Value::Object(d))) = (serde_json::to_value(&*o), serde_json::to_value(ToolOptions::default())) else {
+        return;
+    };
+    for k in keys {
+        if let Some(v) = d.get(*k) {
+            cur.insert((*k).to_string(), v.clone());
+        }
+    }
+    if let Ok(n) = serde_json::from_value(Value::Object(cur)) {
+        *o = n;
+    }
+}
+
+/// The [`ToolOptions`] fields `tool` shows, by their serialized names: what Reset Tool resets and
+/// what a tool preset made with + stores (#7356).
+pub fn option_keys(tool: Tool) -> &'static [&'static str] {
+    // `reset!` names each field once; one that is misspelt or gone fails to compile.
     macro_rules! reset {
-        ($($f:ident),* $(,)?) => {{ $( o.$f = d.$f.clone(); )* }};
+        ($($f:ident),* $(,)?) => {{
+            let _ = |o: &ToolOptions| { $(let _ = &o.$f;)* };
+            &[$(stringify!($f)),*]
+        }};
     }
     match tool {
         Tool::Move => reset!(move_auto_select, move_target, move_show_transform),
@@ -144,7 +167,10 @@ pub fn reset_options(o: &mut ToolOptions, tool: Tool) {
         ),
         Tool::PerspectiveCrop => reset!(crop_width, crop_height, crop_resolution, crop_resolution_unit, perspective_crop_grid),
         Tool::Eyedropper => reset!(eyedropper_size, eyedropper_sample, eyedropper_ring),
-        Tool::Pencil => reset!(pencil_auto_erase),
+        Tool::Brush => reset!(brush_clear),
+        Tool::Pencil => reset!(pencil_auto_erase, pencil_clear),
+        Tool::Eraser => reset!(eraser_mode),
+        Tool::Remove => reset!(remove_new_layer, remove_after_each_stroke),
         Tool::BackgroundEraser => reset!(bg_sampling, bg_limits, bg_tolerance, bg_protect_fg),
         Tool::ColorReplacement => reset!(cr_mode, cr_sampling, cr_limits, cr_tolerance, cr_anti_alias),
         Tool::MagicEraser => reset!(tolerance, anti_alias, contiguous, sample_all_layers, magic_eraser_opacity),
@@ -155,7 +181,7 @@ pub fn reset_options(o: &mut ToolOptions, tool: Tool) {
         Tool::SpotHealing => reset!(spot_type, sample_all_layers),
         Tool::Healing => reset!(clone_aligned, clone_sample),
         Tool::Patch => reset!(patch_mode, patch_content_aware, patch_structure, patch_color, sample_all_layers),
-        Tool::ContentAwareMove => reset!(cam_mode, cam_structure, cam_color, sample_all_layers),
+        Tool::ContentAwareMove => reset!(cam_mode, cam_structure, cam_color, cam_transform_on_drop, sample_all_layers),
         Tool::RedEye => reset!(red_eye_pupil_size, red_eye_darken),
         Tool::CloneStamp => reset!(clone_aligned, clone_sample),
         Tool::PatternStamp => reset!(pattern_stamp_aligned, pattern_stamp_impressionist, pattern_stamp_scale, pattern_stamp_angle),
@@ -173,12 +199,9 @@ pub fn reset_options(o: &mut ToolOptions, tool: Tool) {
         | Tool::Ruler
         | Tool::Note
         | Tool::Count
-        | Tool::Brush
         | Tool::MixerBrush
-        | Tool::Eraser
         | Tool::Hand
         | Tool::RotateView
-        | Tool::Remove
         | Tool::HistoryBrush
         | Tool::PathSelection
         | Tool::DirectSelection
@@ -188,7 +211,7 @@ pub fn reset_options(o: &mut ToolOptions, tool: Tool) {
         | Tool::DeleteAnchorPoint
         | Tool::ConvertPoint
         | Tool::Artboard
-        | Tool::Frame => {}
+        | Tool::Frame => &[],
     }
 }
 
@@ -200,6 +223,21 @@ mod tests {
         let mut s = photocraft_engine::Session::new();
         s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
         PhotocraftApp::new(s, crate::Services::default())
+    }
+
+    /// Every option belongs to a tool, so Reset Tool and tool presets (#7356) miss none, and every
+    /// listed name is a real serialized field.
+    #[test]
+    fn every_option_belongs_to_a_tool() {
+        let all = serde_json::to_value(ToolOptions::default()).unwrap();
+        let all = all.as_object().unwrap();
+        let listed: std::collections::BTreeSet<&str> = Tool::ALL.iter().flat_map(|t| option_keys(*t).iter().copied()).collect();
+        for k in all.keys() {
+            assert!(listed.contains(k.as_str()), "{k} is no tool's option");
+        }
+        for k in listed {
+            assert!(all.contains_key(k), "{k} is not a ToolOptions field");
+        }
     }
 
     /// Reset Tool resets only the current tool's options; Reset All Tools asks, then resets all.

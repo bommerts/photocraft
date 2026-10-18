@@ -92,10 +92,12 @@ fn preset_size(name: &str) -> Option<(u32, u32)> {
 }
 
 fn background_param(p: &Value, cmd: &str) -> Result<Option<ArtboardBackground>> {
-    let custom = p.get("color").map(|_| {
-        let c = color_param(p, "color", [1.0; 4]);
-        ArtboardBackground::Custom(Color::rgba(c[0], c[1], c[2], c[3]))
-    });
+    let custom = if p.get("color").is_some() {
+        let c = color_param(cmd, p, "color", [1.0; 4])?;
+        Some(ArtboardBackground::Custom(Color::rgba(c[0], c[1], c[2], c[3])))
+    } else {
+        None
+    };
     Ok(match p.get("background").and_then(Value::as_str) {
         None => custom,
         Some("white") => Some(ArtboardBackground::White),
