@@ -241,9 +241,7 @@ impl Surface {
 
     /// Mutable access to a tile, allocating it (filled with the default pixel) or un-sharing it.
     pub fn tile_mut(&mut self, c: TileCoord) -> &mut Tile {
-        let fmt = self.format;
-        let dp = self.default_pixel.clone();
-        let arc = self.tiles.entry(c).or_insert_with(|| Arc::new(Tile::filled(&fmt, &dp)));
+        let arc = self.tiles.entry(c).or_insert_with(|| Arc::new(Tile::filled(&self.format, &self.default_pixel)));
         Arc::make_mut(arc)
     }
 
