@@ -314,6 +314,7 @@ fn type_attaches_to_a_path_and_releases_it() {
     assert!(matches!(text(&s, id).shape, TextShape::Path { .. }));
 }
 
+/// Reject invalid creation before insertion, and undo successful path creation as one edit.
 #[test]
 fn creating_path_text_is_atomic_and_undoable() {
     for depth in [8, 16, 32] {
@@ -338,6 +339,7 @@ fn creating_path_text_is_atomic_and_undoable() {
     }
 }
 
+/// Named path creation uses geometry from the current document's saved paths.
 #[test]
 fn creating_type_on_a_saved_path_uses_its_geometry() {
     let mut s = session(8);
@@ -345,6 +347,43 @@ fn creating_type_on_a_saved_path_uses_its_geometry() {
     let result = s.execute("type.create", json!({"text": "Saved", "path": {"name": "Curve"}})).unwrap();
     let id = LayerId(result["layer"].as_u64().unwrap());
     assert!(matches!(text(&s, id).shape, TextShape::Path { .. }));
+}
+
+/// Shared path validation reports its actual caller without inserting a layer or history step.
+#[test]
+fn invalid_type_path_errors_identify_the_command_that_ran() {
+    for depth in [8, 16, 32] {
+        let mut s = session(depth);
+        let shape = s.execute("shape.create", json!({"kind": "ellipse", "rect": [20, 20, 80, 80]})).unwrap()["layer"].as_u64().unwrap();
+        let id = text_layer(&mut s, "Existing");
+        let before = s.active().unwrap().history.past_len();
+        let count = s.active().unwrap().doc.walk().len();
+        for path in [
+            json!({}),
+            json!({"name": "missing"}),
+            json!({"name": 4}),
+            json!({"shape": "bad"}),
+            json!({"shape": shape, "start": 1e100}),
+            json!({"shape": shape, "flip": 3}),
+            json!({"shape": shape, "subpath": -1}),
+            json!({"shape": shape, "subpath": 4}),
+        ] {
+            for cmd in ["type.create", "type.attachToPath"] {
+                let params = if cmd == "type.create" {
+                    json!({"text": "Bad", "path": path})
+                } else {
+                    let mut params = path.clone();
+                    params["layer"] = json!(id.0);
+                    params
+                };
+                assert!(matches!(s.execute(cmd, params), Err(EngineError::BadParams { cmd: actual, .. }) if actual == cmd), "{cmd}: {path}");
+                assert_eq!(s.active().unwrap().history.past_len(), before);
+                assert_eq!(s.active().unwrap().doc.walk().len(), count);
+                assert!(matches!(text(&s, id).shape, TextShape::Point));
+            }
+        }
+        assert!(matches!(s.execute("type.create", json!({"text": "Bad", "path": "bad"})), Err(EngineError::BadParams { cmd, .. }) if cmd == "type.create"));
+    }
 }
 
 #[test]

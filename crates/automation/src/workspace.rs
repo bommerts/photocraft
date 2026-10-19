@@ -886,6 +886,7 @@ mod tests {
         assert!(unclassified.is_empty(), "filesystem path parameters in the command registry need an automation policy: {unclassified:?}");
     }
 
+    /// Document-local path selectors never grant filesystem authority to Type creation.
     #[test]
     fn type_creation_uses_document_path_geometry_without_filesystem_authority() {
         let mut headless = crate::Headless::new();

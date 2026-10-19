@@ -630,6 +630,7 @@ fn circular_type_canvas_click_edit_and_undo() {
     }
 }
 
+/// Pointer hit testing and drag selection share the curve used to render the glyphs.
 #[test]
 fn path_type_caret_and_drag_selection_follow_the_curve() {
     let mut app = new_app();
@@ -659,6 +660,7 @@ fn path_type_caret_and_drag_selection_follow_the_curve() {
     assert_eq!(super::offset_at(app, id, px, py), 7);
 }
 
+/// Type clicks target a visible outline, including the selected saved path, not its fill.
 #[test]
 fn type_path_hit_uses_outline_and_selected_saved_path() {
     let mut app = new_app();

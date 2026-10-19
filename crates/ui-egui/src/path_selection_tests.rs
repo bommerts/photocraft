@@ -257,12 +257,14 @@ fn path_overlay_drawn_for_non_vector_tools() {
     assert_path_overlay_drawn(Tool::Brush, "work");
 }
 
+/// Switching to Type keeps the active work or saved path visible for a path-text click.
 #[test]
 fn type_path_overlay_drawn_for_work_and_selected_saved_paths() {
     assert_path_overlay_drawn(Tool::Type, "work");
     assert_path_overlay_drawn(Tool::Type, "Saved");
 }
 
+/// Compare overlay shapes with and without the requested path under one tool.
 fn assert_path_overlay_drawn(tool: Tool, path_name: &str) {
     let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
     app.run("file.new", json!({"width": 200, "height": 200})).unwrap();

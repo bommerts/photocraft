@@ -823,7 +823,7 @@ pub(crate) fn new_text_layer(s: &Session, p: &Value, cmd: &str) -> Result<TextLa
         if p.get("box").is_some() {
             return Err(bad(cmd, "path text cannot also have a paragraph box"));
         }
-        crate::type_extra_cmds::set_text_path(&mut t, &s.active().ok_or(EngineError::NoDocument)?.doc, path)?;
+        crate::type_extra_cmds::set_text_path(&mut t, &s.active().ok_or(EngineError::NoDocument)?.doc, path, cmd)?;
     }
     Ok(t)
 }

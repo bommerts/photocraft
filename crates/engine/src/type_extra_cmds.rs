@@ -329,10 +329,10 @@ fn convert_to_shape(s: &mut Session, p: &Value) -> Result<Value> {
 /// layout walk millions of segments).
 const MAX_TYPE_PATH_KNOTS: usize = 100_000;
 
-/// The subpath `type.attachToPath` follows, in document space: the work path (default) or a
-/// shape layer's path (`"shape":id`), subpath `"subpath"` (default 0).
-fn path_source(doc: &Document, p: &Value) -> Result<Subpath> {
-    let bad = |m: &str| EngineError::BadParams { cmd: "type.attachToPath".into(), msg: m.into() };
+/// Resolve a document-local work, saved or shape subpath for Type creation or attachment.
+/// Errors retain the caller's command id; `subpath` defaults to the first subpath.
+fn path_source(doc: &Document, p: &Value, cmd: &str) -> Result<Subpath> {
+    let bad = |m: &str| EngineError::BadParams { cmd: cmd.into(), msg: m.into() };
     let path = match p.get("shape") {
         None | Some(Value::Null) => match p.get("name") {
             None | Some(Value::Null) => doc.work_path.as_ref().ok_or_else(|| bad("the document has no work path; draw a path or pass \"shape\":layerId"))?,
@@ -364,11 +364,12 @@ fn path_source(doc: &Document, p: &Value) -> Result<Subpath> {
 }
 
 /// Attach before insertion too, so creating path text is atomic and has one undo step.
-pub(crate) fn set_text_path(t: &mut TextLayer, doc: &Document, p: &Value) -> Result<()> {
+/// Invalid path parameters retain the calling command's id for CLI and automation errors.
+pub(crate) fn set_text_path(t: &mut TextLayer, doc: &Document, p: &Value, cmd: &str) -> Result<()> {
     if !p.is_object() {
-        return Err(EngineError::BadParams { cmd: "type.attachToPath".into(), msg: "path must be an object".into() });
+        return Err(EngineError::BadParams { cmd: cmd.into(), msg: "path must be an object".into() });
     }
-    let bad = |m: &str| EngineError::BadParams { cmd: "type.attachToPath".into(), msg: m.into() };
+    let bad = |m: &str| EngineError::BadParams { cmd: cmd.into(), msg: m.into() };
     let start = match p.get("start") {
         None | Some(Value::Null) => 0.0,
         Some(v) => {
@@ -379,7 +380,7 @@ pub(crate) fn set_text_path(t: &mut TextLayer, doc: &Document, p: &Value) -> Res
         None | Some(Value::Null) => false,
         Some(v) => v.as_bool().ok_or_else(|| bad("\"flip\" must be true or false"))?,
     };
-    let sub = path_source(doc, p)?;
+    let sub = path_source(doc, p, cmd)?;
     // The path lives in document space; the type layer keeps it in its own text space, so
     // the type lands on the path where it is drawn.
     let inv = t.transform.inverse().ok_or_else(|| EngineError::Other("the type layer's transform cannot be inverted".into()))?;
@@ -393,9 +394,10 @@ pub(crate) fn set_text_path(t: &mut TextLayer, doc: &Document, p: &Value) -> Res
     Ok(())
 }
 
+/// Attach the chosen path through the shared text-edit transaction and lock checks.
 fn attach_to_path(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_param(s, p)?;
-    with_text(s, p, "Type on a Path", |t, doc| set_text_path(t, doc, p))?;
+    with_text(s, p, "Type on a Path", |t, doc| set_text_path(t, doc, p, "type.attachToPath"))?;
     let t = s.active().and_then(|st| st.doc.layer(id)).and_then(|l| match &l.content {
         LayerContent::Text(t) => Some(t),
         _ => None,

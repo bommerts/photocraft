@@ -164,6 +164,8 @@ pub struct PlacedGlyph {
     pub style: u32,
     /// Orientation of the outline (vertical type).
     pub orient: GlyphOrient,
+    /// Paragraph alignment used to bound closed-path placement to one lap.
+    pub align: TextAlign,
 }
 
 /// Underline/strikethrough rectangle (text space px).
@@ -983,6 +985,7 @@ impl Layouter {
                             y: baseline + g.y,
                             style: si,
                             orient: GlyphOrient::Horizontal,
+                            align: ps.align,
                         });
                         if let Some(v) = &vm {
                             let upright = class == 1 || (class == 2 && !plain.contains(&g.id));

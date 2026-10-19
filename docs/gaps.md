@@ -319,3 +319,4 @@ what an agent can't finish alone.
 | 2026-10-13 | minor | Horizontal Type tool clicks shape/work/saved paths with curved caret and selection (#1082); PSD path text and start/end/flip handles remain open; estimates unchanged |
 | 2026-10-14 | minor | Reconciled upstream progress headers and linked horizontal Type path text to #1082; text inside shapes and PSD path text remain open |
 | 2026-10-17 | minor | Reconciled latest main progress with horizontal Type path text (#1082); text inside shapes and PSD path text remain open; estimates unchanged |
+| 2026-10-19 | minor | Reconciled upstream progress headers; path-text review fixes bound centered glyphs to one lap and preserve caller-specific validation errors (#1082); broader path-text gaps and estimates unchanged |

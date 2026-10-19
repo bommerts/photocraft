@@ -2047,6 +2047,53 @@ fn type_on_a_path_follows_the_curve() {
     assert_eq!(ink(&mut eng, &dot), flat);
 }
 
+/// Centered closed-path text must not draw twice as many glyphs onto the same lap.
+#[test]
+fn closed_path_overflow_draws_only_one_lap_for_each_alignment() {
+    use photocraft_doc::vector::Subpath;
+    let mut path = Subpath::polyline(&[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]);
+    path.closed = true;
+    let mut engine = TextEngine::new();
+    let mut counts = Vec::new();
+    for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right, TextAlign::JustifyCenter, TextAlign::JustifyRight] {
+        let mut layer = point(&"M".repeat(100), 20.0);
+        layer.shape = TextShape::Path { path: path.clone(), start: 390.0, flip: false };
+        layer.paragraphs = vec![ParagraphRun { len: layer.text.len(), style: ParagraphStyle { align, ..Default::default() } }];
+        let layout = engine.layout(&layer, 72.0);
+        let warp = crate::render::layout_deform(&layout, &layer).unwrap();
+        let outlines = crate::render::outlines(&layout, &Affine::IDENTITY, Some(&warp));
+        counts.push(outlines.len());
+    }
+    assert!(counts[0] > 10 && counts[0] < 40, "one lap contains only part of the line: {counts:?}");
+    for count in &counts[1..] {
+        assert!(count.abs_diff(counts[0]) <= 1, "each alignment must draw one lap: {counts:?}");
+    }
+}
+
+/// A mixed-alignment layer must use each paragraph's bounds rather than the first paragraph's.
+#[test]
+fn closed_path_visibility_keeps_each_paragraphs_alignment() {
+    use photocraft_doc::vector::Subpath;
+    let line = "M".repeat(100);
+    let mut layer = point(&format!("{line}\n{line}\n{line}"), 20.0);
+    layer.paragraphs = [TextAlign::Left, TextAlign::Center, TextAlign::Right]
+        .into_iter()
+        .enumerate()
+        .map(|(i, align)| ParagraphRun { len: line.len() + usize::from(i < 2), style: ParagraphStyle { align, ..Default::default() } })
+        .collect();
+    let mut path = Subpath::polyline(&[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]);
+    path.closed = true;
+    layer.shape = TextShape::Path { path, start: 390.0, flip: false };
+    let mut engine = TextEngine::new();
+    let layout = engine.layout(&layer, 72.0);
+    for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
+        assert_eq!(layout.glyphs.iter().filter(|g| g.align == align).count(), 100);
+    }
+    let warp = crate::render::layout_deform(&layout, &layer).unwrap();
+    let count = crate::render::outlines(&layout, &Affine::IDENTITY, Some(&warp)).len();
+    assert!((63..=69).contains(&count), "each paragraph draws one lap: {count}");
+}
+
 #[test]
 fn hyphenless_postscript_names_split_trailing_styles() {
     for (ps, family, weight, italic) in [

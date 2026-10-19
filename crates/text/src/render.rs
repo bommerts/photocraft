@@ -94,7 +94,7 @@ fn draw_pass(layout: &TextLayout, transform: &Xform, sink: &mut impl LineSink, o
         // Type on a path moves each glyph rigidly: turned to the curve at its centre.
         let mut bend = warp;
         if let Some(w) = warp {
-            match w.place_glyph(glyph_center(layout, g, &font, face.size_px, &coords)) {
+            match w.place_glyph_aligned(glyph_center(layout, g, &font, face.size_px, &coords), g.align) {
                 Placement::Bend => {}
                 Placement::Hidden => continue,
                 Placement::Frame(m) => {
@@ -378,7 +378,7 @@ pub fn outlines(layout: &TextLayout, transform: &Affine, warp: Option<&Warp>) ->
         let mut glyph = glyph_xform(layout, g, face.skew_deg);
         let mut bend = warp;
         if let Some(w) = warp {
-            match w.place_glyph(glyph_center(layout, g, &font, face.size_px, &coords)) {
+            match w.place_glyph_aligned(glyph_center(layout, g, &font, face.size_px, &coords), g.align) {
                 Placement::Bend => {}
                 Placement::Hidden => continue,
                 Placement::Frame(m) => {

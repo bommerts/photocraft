@@ -53,10 +53,12 @@ fn to_text(aff: &Affine, x: f64, y: f64) -> (f32, f32) {
     (p.x as f32, p.y as f32)
 }
 
+/// Prepare the edited layer's curve for document-pointer projection and selection overlays.
 fn path_warp(app: &PhotocraftApp, id: LayerId) -> Option<Warp> {
     Warp::on_path(&text_layer(&app.session.active()?.doc, id)?.shape)
 }
 
+/// Choose the equivalent closed-path position nearest the aligned text's layout extent.
 fn project_text(warp: &Warp, layout: &TextLayout, x: f32, y: f32) -> Option<(f32, f32)> {
     let (mut x, y) = warp.project(f64::from(x), f64::from(y))?;
     if let Some(length) = warp.closed_length()

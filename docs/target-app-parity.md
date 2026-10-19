@@ -581,3 +581,4 @@ See [method, raw measurements and reproduction](five-algorithm-performance.md).
 | 2026-10-03 | major | `docs/parity-estimate.md`: menu breadth 625/625, weighted ~82–86% |
 | 2026-10-13 | minor | Horizontal Type tool clicks shape/work/saved paths with curved caret and selection (#1082); PSD path text and start/end/flip handles remain open; estimates unchanged |
 | 2026-10-14 | minor | Reconciled upstream progress headers and linked horizontal Type path text to #1082; text inside shapes and PSD path text remain open |
+| 2026-10-19 | minor | Retained upstream progress and horizontal path text (#1082); fixed centered-path overflow and command error attribution without changing parity estimates |
