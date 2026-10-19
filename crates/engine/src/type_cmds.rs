@@ -504,8 +504,9 @@ pub fn style_paragraphs(t: &mut TextLayer, a: usize, b: usize, f: &dyn Fn(&mut P
     t.paragraphs = out.into_iter().map(|(len, style)| ParagraphRun { len, style }).collect();
 }
 
-/// Replaces bytes `a..b` with `new`, keeping styles: inserted text takes the style of the
-/// character before it (or after it at the start).
+/// Replaces bytes `a..b` with `new`, keeping styles: replacing a selection keeps the style of its
+/// first character (as Photoshop does, so retyping a smaller second line stays small); inserting
+/// at a caret takes the style of the character before it (or after it at the start).
 pub fn replace_text(t: &mut TextLayer, a: usize, b: usize, new: &str) {
     fn adjust<S: Clone + PartialEq>(runs: Vec<(usize, S)>, a: usize, b: usize, ins: usize, trailing_paragraph: bool) -> Vec<(usize, S)> {
         let mut out: Vec<(usize, S)> = Vec::new();
@@ -521,7 +522,15 @@ pub fn replace_text(t: &mut TextLayer, a: usize, b: usize, new: &str) {
                     *acc += r.0;
                     Some((s, s + r.0))
                 })
-                .position(|(s, e)| if a == 0 { e > 0 || s == 0 } else { a > s && a <= e })
+                .position(|(s, e)| {
+                    if a == 0 {
+                        e > 0 || s == 0
+                    } else if a < b {
+                        a >= s && a < e
+                    } else {
+                        a > s && a <= e
+                    }
+                })
                 .unwrap_or(0)
         };
         for (i, (len, st)) in runs.into_iter().enumerate() {
@@ -1551,6 +1560,25 @@ mod tests {
         assert_eq!(t.runs.len(), 1);
         assert_eq!(t.runs[0].len, 3);
         assert_eq!(t.runs[0].style.size_pt, 40.0);
+    }
+
+    /// Replacing a selected smaller second line (by typing or pasting) keeps its size, not the
+    /// first line's, whose line break precedes the selection.
+    #[test]
+    fn replacing_a_selection_keeps_its_first_characters_style() {
+        let mut s = session();
+        let id = s.execute("type.create", json!({"x": 5, "y": 50, "text": "BIG\nsmall", "size": 40})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("type.edit", json!({"layer": id, "runs": [{"start": 4, "end": 9, "size": 12}]})).unwrap();
+        s.execute("type.edit", json!({"layer": id, "replace": {"start": 4, "end": 9, "text": "AIR"}})).unwrap();
+        let sizes = |s: &Session| text_layer(s, id).char_runs().iter().map(|r| (r.len, r.style.size_pt)).collect::<Vec<_>>();
+        assert_eq!(text_layer(&s, id).text, "BIG\nAIR");
+        assert_eq!(sizes(&s), [(4, 40.0), (3, 12.0)]);
+        // A mixed selection takes its first character's style.
+        s.execute("type.edit", json!({"layer": id, "replace": {"start": 2, "end": 6, "text": "xy"}})).unwrap();
+        assert_eq!(sizes(&s), [(4, 40.0), (1, 12.0)]);
+        // Inserting at a caret still follows the character before it.
+        s.execute("type.edit", json!({"layer": id, "replace": {"start": 4, "end": 4, "text": "!"}})).unwrap();
+        assert_eq!(sizes(&s), [(5, 40.0), (1, 12.0)]);
     }
 
     fn kerning_of(s: &Session, id: u64) -> Vec<(Kerning, f32)> {

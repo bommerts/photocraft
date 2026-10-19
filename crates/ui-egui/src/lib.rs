@@ -605,9 +605,9 @@ pub struct PhotocraftApp {
     /// Footprint trail of a retouching drag (see `stroke_trail`).
     trail: Option<stroke_trail::Trail>,
     /// Remove tool strokes waiting to be applied together (Remove after each stroke off), the
-    /// document they belong to, and their tint on the canvas (`retouch_ui`).
+    /// document, layer and channel they belong to, and their tint on the canvas (`retouch_ui`).
     pub(crate) remove_pending: Vec<Vec<[f64; 3]>>,
-    pub(crate) remove_pending_doc: Option<photocraft_doc::DocId>,
+    pub(crate) remove_pending_target: Option<retouch_ui::RemoveTarget>,
     pub(crate) remove_trail: Option<stroke_trail::Trail>,
     /// The open menus' items, reused between frames (`menus::ItemCache`).
     pub(crate) menu_cache: Option<menus::ItemCache>,
@@ -879,7 +879,7 @@ impl PhotocraftApp {
             committed_stroke: None,
             trail: None,
             remove_pending: Vec::new(),
-            remove_pending_doc: None,
+            remove_pending_target: None,
             remove_trail: None,
             menu_cache: None,
             move_preview: None,
@@ -2119,6 +2119,18 @@ impl eframe::App for PhotocraftApp {
             ctx.set_cursor_icon(egui::CursorIcon::Wait);
         }
         let ui_ms = gpu_canvas::now_ms() - t0;
+        // A GPU measurement lands a frame or two after the refresh it belongs to. Refreshes
+        // carry them out, but the last refresh before the app settles has none following it, so
+        // drain the timer here too or its number is never reported. Drain it either way: a
+        // measurement left sitting would surface later against an unrelated refresh. Report it
+        // only while the canvas is still on the GPU, since a CPU refresh clears `gpu_ms`
+        // precisely so a GPU number is never shown as that refresh's.
+        if let Some(gpu) = &self.gpu
+            && let Some(t) = gpu.take_gpu_timing()
+            && self.perf.last_refresh.starts_with("gpu")
+        {
+            self.perf.record_gpu(t);
+        }
         self.perf.frame(ui_ms);
         if self.stroke_trace.enabled() {
             self.stroke_trace.canvas(self.perf.frame_refresh_ms);

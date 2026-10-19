@@ -135,6 +135,44 @@ fn save_a_copy_keeps_path_and_dirty_state() {
     assert!(s.execute("file.saveACopy", json!({})).is_err());
 }
 
+/// A copy over the document's own file, however the path is spelt, would replace it (a lossy
+/// re-encode can't be undone), so it is refused unless `overwrite` is passed (#7437).
+#[test]
+fn save_a_copy_refuses_the_documents_own_file() {
+    let dir = tmp("copy-own");
+    let path = png(&dir, "own.png", 6, 4, "#ff0000");
+    let bytes = std::fs::read(&path).unwrap();
+    let mut s = Session::new();
+    open_bytes_as(&mut s, &path, &bytes, None, Some(path.clone())).unwrap();
+    s.execute("layer.new.layer", json!({})).unwrap();
+    s.execute("edit.fill", json!({"color": "#00ff00"})).unwrap();
+    let link = join(&dir, "link.png");
+    std::fs::hard_link(&path, &link).unwrap();
+    let rev = s.active().unwrap().revision;
+    for p in [path.clone(), format!("{dir}/./own.png"), link] {
+        let r = s.execute("file.saveACopy", json!({"path": p}));
+        assert!(r.as_ref().is_err_and(|e| e.to_string().contains("overwrite")), "{p}: {r:?}");
+        assert!(s.execute("file.saveACopy", json!({"path": p, "overwrite": false})).is_err(), "{p}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{p}");
+        let st = s.active().unwrap();
+        assert_eq!(st.path.as_deref(), Some(path.as_str()), "{p}");
+        assert_eq!(st.revision, rev, "{p}");
+        assert!(st.is_dirty(), "{p}");
+    }
+    let other = join(&dir, "other.png");
+    s.execute("file.saveACopy", json!({"path": other})).unwrap();
+    assert!(std::fs::metadata(&other).unwrap().len() > 0);
+    s.execute("file.saveACopy", json!({"path": path, "overwrite": true})).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(s.active().unwrap().path.as_deref(), Some(path.as_str()));
+    assert!(s.active().unwrap().is_dirty());
+
+    // A document that was never saved has no file of its own: it copies anywhere, as before.
+    let mut fresh = session(4, 4, 8);
+    fresh.execute("file.saveACopy", json!({"path": path})).unwrap();
+    assert_eq!(fresh.active().unwrap().path, None);
+}
+
 /// `tgaBits` picks the Targa's bits per pixel (byte 16 of the header); unset, a document with an
 /// alpha channel is written as 32-bit, with the channel as the alpha.
 #[test]

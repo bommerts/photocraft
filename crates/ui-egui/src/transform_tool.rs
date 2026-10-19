@@ -792,11 +792,14 @@ fn preview_image(
         (None, Some(s)) if layer.is_some_and(|l| matches!(l.content, LayerContent::Raster(_))) => Some(s),
         _ => {
             let mut solo = doc.clone();
-            show_only(&mut solo.layers, &[id]);
-            // Its clipping base is hidden here, which would clip it away entirely (#5239).
-            // Clear the target itself, not only the top-level group that contains it.
-            if let Some(l) = solo.layer_mut(id) {
-                l.clipped = false;
+            if layer.is_some() {
+                show_preview_target(&mut solo.layers, id);
+            } else {
+                // Keep the previous fallback for an invalid id: render the document, with only
+                // top-level clipping disabled. Production callers get ids from this document.
+                for l in &mut solo.layers {
+                    l.clipped = false;
+                }
             }
             if let Some(l) = solo.layer_mut(id).filter(|_| bare) {
                 l.effects.enabled = false;
@@ -981,6 +984,24 @@ fn show_only(layers: &mut [photocraft_doc::Layer], keep: &[LayerId]) {
         }
         match &mut l.content {
             LayerContent::Group(g) if g.children.iter().any(|c| keep.iter().any(|k| contains(c, *k))) => show_only(&mut g.children, keep),
+            _ => l.visible = false,
+        }
+    }
+}
+
+/// Leave only `id`, its descendants and the groups holding it visible. Every layer on that path
+/// is detached from its clipping base because the base is hidden in this isolated render (#5239).
+fn show_preview_target(layers: &mut [photocraft_doc::Layer], id: LayerId) {
+    for l in layers {
+        if l.id == id {
+            l.clipped = false;
+            continue;
+        }
+        match &mut l.content {
+            LayerContent::Group(g) if g.children.iter().any(|c| contains(c, id)) => {
+                l.clipped = false;
+                show_preview_target(&mut g.children, id);
+            }
             _ => l.visible = false,
         }
     }
@@ -4766,6 +4787,37 @@ mod tests {
             Color32::from_rgb(255, 0, 0),
             "a sibling in the parent group must not be baked into the moving texture"
         );
+    }
+
+    #[test]
+    fn nested_group_preview_detaches_every_clipped_ancestor() {
+        use photocraft_color::PixelFormat;
+        use photocraft_doc::Layer;
+
+        let mut app = app_with_square(64, photocraft_geom::Rect::new(8, 8, 24, 24));
+        let st = app.session.active_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let target_pixels = doc.layers.pop().unwrap();
+        let target = Layer::group("target", vec![target_pixels]);
+        let target_id = target.id;
+        let mut middle = Layer::group("middle clipped ancestor", vec![target]);
+        middle.clipped = true;
+        let mut inner_base = Layer::raster("hidden inner clipping base", PixelFormat::RGBA8);
+        inner_base.surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(0, 0, 64, 64), &[0.0, 0.0, 1.0, 1.0]);
+        let mut outer = Layer::group("outer clipped ancestor", vec![inner_base, middle]);
+        outer.clipped = true;
+        doc.layers.push(outer);
+
+        let (image, _) = preview_image(&st.doc, target_id, None, photocraft_geom::Rect::new(8, 8, 24, 24), 4096, false);
+        assert_eq!(image.pixels[8 * image.size[0] + 8], Color32::from_rgb(255, 0, 0), "hidden clipping bases must not make a nested target disappear");
+    }
+
+    #[test]
+    fn unknown_preview_target_keeps_the_previous_document_fallback() {
+        let app = app_with_square(64, photocraft_geom::Rect::new(8, 8, 24, 24));
+        let st = app.session.active().unwrap();
+        let (image, _) = preview_image(&st.doc, LayerId::fresh(), None, photocraft_geom::Rect::new(8, 8, 24, 24), 4096, false);
+        assert_eq!(image.pixels[8 * image.size[0] + 8], Color32::from_rgb(255, 0, 0));
     }
 
     /// The textured meshes `draw_content` paints for the moving pixels (not the box or handles).

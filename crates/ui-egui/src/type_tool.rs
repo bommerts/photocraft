@@ -121,7 +121,7 @@ pub(crate) fn hit_path(app: &PhotocraftApp, x: f64, y: f64) -> Option<serde_json
 
 /// Topmost shown type layer (it and every group around it visible, #4320) whose laid-out text
 /// contains the document point.
-fn hit_layer(app: &mut PhotocraftApp, x: f64, y: f64) -> Option<LayerId> {
+pub(crate) fn hit_layer(app: &mut PhotocraftApp, x: f64, y: f64) -> Option<LayerId> {
     let doc = app.session.active()?.doc.clone();
     let slop = 6.0 / app.point_zoom().max(0.01);
     // A Type Mask session's text is a hidden layer; it is still the text being edited.
@@ -1555,6 +1555,8 @@ pub(crate) fn family_picker_in(
     preview: photocraft_engine::prefs::FontPreview,
 ) -> bool {
     let mut changed = false;
+    // A font picked from the open menu (click or Enter): the field keeps the focus afterwards.
+    let mut picked = false;
     let search_id = ui.id().with(("font-search", salt));
     let focus_id = search_id.with("focus");
     // The list opens on the press, so a press-drag-release picks a font too (#2735).
@@ -1612,6 +1614,7 @@ pub(crate) fn family_picker_in(
             }
         }
         let accept = enter && rows.iter().any(|(f, _)| *f == current);
+        picked |= accept;
         if accept {
             ui.data_mut(|d| d.remove::<String>(search_id));
             ui.close();
@@ -1621,7 +1624,11 @@ pub(crate) fn family_picker_in(
 
         let mut hovered: Option<String> = None;
         for (f, label) in rows {
-            let mut button = egui::Button::selectable(f == current, label).truncate();
+            // Highlighted by its fill alone, as Photoshop's font menu is. A selectable button lays
+            // out its frame's stroke only once hovered or selected, so with the theme's stroke the
+            // row under the pointer (and the selected one) grew and pushed the rows below down:
+            // the list jumped as the pointer moved (#7406).
+            let mut button = egui::Button::selectable(f == current, label).truncate().stroke(egui::Stroke::NONE);
             if let Some((size, [_, h])) = preview {
                 button =
                     button.right_text(egui::Atom::custom(ui.id().with(("font-sample", f)), egui::vec2(crate::font_preview::slot_width(ui.ctx(), f, size), h)));
@@ -1643,6 +1650,7 @@ pub(crate) fn family_picker_in(
                 // A served family not fetched yet: start now, before any text needs it.
                 photocraft_text::served::request(f);
                 changed = true;
+                picked = true;
                 ui.data_mut(|d| d.remove::<String>(search_id));
                 hovered = None;
                 ui.close();
@@ -1664,6 +1672,38 @@ pub(crate) fn family_picker_in(
         ui.data_mut(|d| d.remove::<bool>(focus_id));
     }
     let hovered_font = response.inner.unwrap_or_default();
+
+    // As in Photoshop, the field keeps the keyboard focus once a font is picked, and ↑ / ↓ on the
+    // focused, closed field step to the previous / next family, applying each (#7407). The lock
+    // filter keeps egui from using those arrows to move the focus to another widget.
+    let field = response.response.id;
+    if picked {
+        ui.memory_mut(|m| m.request_focus(field));
+    }
+    let open = egui::ComboBox::is_open(ui.ctx(), field);
+    if !open && ui.is_enabled() && ui.memory(|m| m.has_focus(field)) {
+        ui.memory_mut(|m| m.set_focus_lock_filter(field, egui::EventFilter { vertical_arrows: true, ..Default::default() }));
+        let down = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+        let up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+        if down || up {
+            // The lock filter only holds from the frame after the field got the focus: an arrow
+            // right after a pick was already read by egui as a focus move, applied at the end of
+            // the frame. Cancel it, so the arrow only steps the font.
+            ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        }
+        // The wheel's step: a negative notch is the next family.
+        let notches = f32::from(u8::from(up)) - f32::from(u8::from(down));
+        let rows = font_menu_rows(families, labels, "");
+        if let Some(i) = rows.iter().position(|(f, _)| *f == current)
+            && let Some(n) = wheel_family_index(i, rows.len(), notches)
+            && let Some((f, _)) = rows.get(n)
+            && **f != *current
+        {
+            current.clone_from(f);
+            photocraft_text::served::request(f);
+            changed = true;
+        }
+    }
 
     // The wheel over the closed button steps through the families, a notch each, like Photoshop's
     // options-bar font menu: no need to open the list (#3350).

@@ -295,6 +295,15 @@ impl GpuCanvas {
         }
     }
 
+    /// Take any GPU measurement that has landed since the last call, without compositing
+    /// anything. [`Compositor::render`] carries measurements out in its stats, but a refresh is
+    /// the only thing that collects them, so the last refresh before the app goes idle would
+    /// never be reported. The frame loop calls this so it is.
+    pub fn take_gpu_timing(&self) -> Option<photocraft_gpu::GpuTiming> {
+        let mut r = self.rs.renderer.write();
+        r.callback_resources.get_mut::<Resources>()?.compositor.as_mut()?.take_gpu_timing()
+    }
+
     /// GPU bytes the wgpu compositor holds: resident layer pages and caches (effect maps and
     /// lower-stack chunks). Keep the scorecard's memory measurements inclusive of reuse.
     pub fn compositor_bytes(&self) -> Option<(u64, usize)> {
@@ -472,6 +481,8 @@ impl GpuCanvas {
             },
         };
         comp.set_health(self.health.clone());
+        // Measured, not waited for: the timestamps come back a frame or two later.
+        comp.measure_gpu_time(device, queue);
         if let Some(b) = res.compositor_budget {
             comp.set_memory_budget(b);
         }
@@ -636,8 +647,10 @@ impl GpuCanvas {
             Ok(stats) => {
                 out.kind = if damage.is_some() { "gpu-rect" } else { "gpu-full" };
                 out.px = region.width() as u64 * region.height() as u64;
+                // Encoding and submitting only: the GPU is still running this work.
                 out.composite_ms = now_ms() - t0;
                 out.uploads = stats.tiles_uploaded as u64;
+                out.gpu = stats.gpu_time;
                 return out;
             }
             Err(e) => out.fallback = Some(e.0),
@@ -876,6 +889,14 @@ pub struct Refresh {
     pub upload_ms: f64,
     /// Layer tiles the wgpu compositor uploaded.
     pub uploads: u64,
+    /// How long the GPU spent executing a recent wgpu composite, once its timestamps came back
+    /// (a frame or two after that refresh, so usually an earlier one than this). It carries its
+    /// own pixel count and is never this refresh's unless they match. `None` when the device has
+    /// no timestamp queries, on the CPU compositor, and on wasm: no number at all is reported
+    /// rather than `composite_ms`, which measures encoding and submitting, not executing. It
+    /// leaves out layer-tile uploads (`uploads` above counts them), so a first refresh of a
+    /// document under-reports by more than the few per cent of a warm one.
+    pub gpu: Option<photocraft_gpu::GpuTiming>,
     /// Why the wgpu compositor wasn't used.
     pub fallback: Option<String>,
 }
@@ -903,9 +924,40 @@ pub fn use_adapter_limits_with(setup: &mut egui_wgpu::WgpuSetup, on_adapter: imp
     if let egui_wgpu::WgpuSetup::CreateNew(create) = setup {
         create.device_descriptor = std::sync::Arc::new(move |adapter| {
             on_adapter(adapter);
-            wgpu::DeviceDescriptor { label: Some("photocraft wgpu device"), required_limits: device_limits(adapter), ..Default::default() }
+            device_descriptor(adapter)
         });
     }
+}
+
+/// How the app asks for its device: egui's defaults, the adapter's texture and buffer size
+/// limits ([`device_limits`]), and timestamp queries where the adapter has them, so the canvas
+/// can report how long the GPU actually spends compositing ([`photocraft_gpu::GpuTimer`]).
+/// A bench or test that builds its own device should use this rather than [`device_limits`]
+/// alone, or it measures a device the app never creates. (`bevel_bench`, `fx_bench` and
+/// `interactive_bench` still call [`device_limits`] directly and so report no GPU time.)
+pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    wgpu::DeviceDescriptor {
+        label: Some("photocraft wgpu device"),
+        required_limits: device_limits(adapter),
+        required_features: timing_features(adapter),
+        ..Default::default()
+    }
+}
+
+/// The timestamp-query features when the adapter supports all of them, else none: asking for a
+/// feature an adapter lacks fails device creation, and a canvas without GPU timing is far better
+/// than no canvas.
+///
+/// `PHOTOCRAFT_NO_GPU_TIMING` suppresses the request as well as the timer
+/// ([`photocraft_gpu::Compositor::measure_gpu_time`]), so the variable also rescues a driver
+/// that advertises the features and then fails or misbehaves on device creation — not only one
+/// whose timestamps come back wrong.
+pub fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    let want = photocraft_gpu::timing::FEATURES;
+    if std::env::var_os("PHOTOCRAFT_NO_GPU_TIMING").is_some() {
+        return wgpu::Features::empty();
+    }
+    if adapter.features().contains(want) { want } else { wgpu::Features::empty() }
 }
 
 /// egui's base limits (WebGL2's on GL), clamped to adapter support, with its maximum texture and buffer sizes.
@@ -938,7 +990,9 @@ pub struct Perf {
     pub ui_ms: f64,
     /// Worst UI frame of the last ~second (ms).
     pub ui_max_ms: f64,
-    /// Last canvas refresh: CPU composite (ms).
+    /// Last canvas refresh, CPU side (ms): the CPU composite on the CPU path, and on the GPU
+    /// path the cost of *encoding and submitting* the composite — not of running it, which is
+    /// `gpu_ms`.
     pub composite_ms: f64,
     /// Last canvas refresh: conversion + upload (ms).
     pub upload_ms: f64,
@@ -950,6 +1004,16 @@ pub struct Perf {
     pub gpu: bool,
     /// Layer tiles uploaded by the last GPU composite.
     pub gpu_uploads: u64,
+    /// How long the GPU spent executing a recent composite (ms), from timestamp queries read
+    /// back after the fact. `None` on the CPU compositor, on a device without timestamp queries
+    /// and on wasm — there is then no honest number to report, and `composite_ms` is not one.
+    /// Excludes layer-tile uploads and end-of-batch work (see `photocraft_gpu::timing`), so it
+    /// is a few per cent under the GPU's full share of a warm refresh and further under a cold
+    /// one.
+    pub gpu_ms: Option<f64>,
+    /// Pixels of the refresh `gpu_ms` measured, which is a frame or two behind
+    /// `last_refresh_px` and may be a different size.
+    pub gpu_ms_px: u64,
     /// Why the last refresh fell back to the CPU compositor (None = GPU composited).
     pub gpu_fallback: Option<String>,
     /// Adapter, backend, driver and fallback state (Help › System Info).
@@ -1102,9 +1166,27 @@ impl Perf {
         self.upload_ms = upload_ms;
         if !kind.starts_with("gpu") {
             self.gpu_uploads = 0;
+            // The CPU compositor did this one: there is no GPU time, and the last GPU
+            // refresh's would be read as this refresh's.
+            self.gpu_ms = None;
+            self.gpu_ms_px = 0;
         } else {
             self.gpu_fallback = None;
         }
+    }
+
+    /// Record a canvas refresh and any GPU measurement that came back with it.
+    pub fn record_refresh(&mut self, r: &Refresh) {
+        self.record(r.kind, r.px, r.composite_ms, r.upload_ms);
+        if let Some(t) = r.gpu {
+            self.record_gpu(t);
+        }
+    }
+
+    /// Record a GPU composite measurement that came back (see [`photocraft_gpu::GpuTiming`]).
+    pub fn record_gpu(&mut self, t: photocraft_gpu::GpuTiming) {
+        self.gpu_ms = Some(t.ms);
+        self.gpu_ms_px = t.px;
     }
     pub fn span(&mut self, name: &'static str, ms: f64) {
         self.spans.insert(name, (ms * 100.0).round() / 100.0);
@@ -2379,6 +2461,36 @@ mod mip_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A GPU measurement arrives a frame or two after its refresh, so most GPU refreshes carry
+    /// none; the last one reported must stand until a newer one lands. A CPU refresh is
+    /// different: there is no GPU time at all then, and keeping the old number would show it as
+    /// this refresh's. Runs anywhere — the GPU timing tests need hardware and CI has none.
+    #[test]
+    fn a_gpu_measurement_stands_until_replaced_and_a_cpu_refresh_clears_it() {
+        let timing = |ms, px| photocraft_gpu::GpuTiming { ms, px, spans: 1 };
+        let refresh = |kind, gpu| Refresh { kind, gpu, ..Default::default() };
+        let mut perf = Perf::default();
+        assert_eq!(perf.gpu_ms, None, "nothing is reported before a measurement");
+
+        perf.record_refresh(&refresh("gpu-full", Some(timing(83.9, 24_000_000))));
+        assert_eq!((perf.gpu_ms, perf.gpu_ms_px), (Some(83.9), 24_000_000));
+
+        // The common case: a GPU refresh whose own measurement has not come back yet.
+        perf.record_refresh(&refresh("gpu-rect", None));
+        assert_eq!((perf.gpu_ms, perf.gpu_ms_px), (Some(83.9), 24_000_000), "the last measurement stands");
+
+        perf.record_refresh(&refresh("gpu-rect", Some(timing(11.2, 1_098_640))));
+        assert_eq!((perf.gpu_ms, perf.gpu_ms_px), (Some(11.2), 1_098_640), "a newer measurement replaces it");
+
+        // The CPU compositor did this one: the GPU number belongs to no refresh on screen.
+        perf.record_refresh(&refresh("full", None));
+        assert_eq!((perf.gpu_ms, perf.gpu_ms_px), (None, 0), "a CPU refresh clears it rather than showing a stale one");
+
+        // And it comes back on the next GPU refresh that carries one.
+        perf.record_refresh(&refresh("gpu-full", Some(timing(42.0, 6_000_000))));
+        assert_eq!((perf.gpu_ms, perf.gpu_ms_px), (Some(42.0), 6_000_000));
+    }
 
     #[test]
     fn device_limits_support_v3d_shader_variable_limit() {

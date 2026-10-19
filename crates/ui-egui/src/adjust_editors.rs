@@ -362,7 +362,7 @@ fn curve_graph(full: Rect, side: f32) -> Rect {
     Rect::from_min_max(base.min + vec2(CURVE_GRAPH_PADDING, CURVE_GRAPH_PADDING), base.max - vec2(CURVE_GRAPH_PADDING, CURVE_GRAPH_PADDING))
 }
 
-fn read_curve(v: &Value, key: &str) -> Vec<[f32; 2]> {
+pub(crate) fn read_curve(v: &Value, key: &str) -> Vec<[f32; 2]> {
     let pts: Vec<[f32; 2]> = v
         .get(key)
         .and_then(Value::as_array)

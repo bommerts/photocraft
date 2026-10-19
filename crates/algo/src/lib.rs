@@ -482,7 +482,8 @@ pub enum FilterParams {
         distribution: Distribution,
         monochromatic: bool,
         seed: u32,
-        /// Depth for [`DepthSource::LayerMask`] (channel 0, document coordinates), supplied by the caller.
+        /// Depth for [`DepthSource::LayerMask`] and [`DepthSource::Channel`] (channel 0, document
+        /// coordinates), supplied by the caller.
         #[serde(skip)]
         depth_map: Option<std::sync::Arc<Image>>,
     },
@@ -972,6 +973,7 @@ fn auto_tile(params: &FilterParams, bounds: Rect) -> i32 {
 }
 
 /// [`apply`] / [`apply_in`] with an explicit tile size (tests use it to check tile independence).
+/// Nonpositive tile sizes are treated as one pixel.
 pub fn apply_tiled(
     surface: &Surface,
     params: &FilterParams,
@@ -1014,6 +1016,8 @@ fn apply_tiled_with_impl(
     ctl: &photocraft_raster::Interrupt,
     prepare_fast_paths: bool,
 ) -> Option<Surface> {
+    // Every dispatch path needs a positive step, including Motion Blur's fallback.
+    let tile = tile.max(1);
     if ctl.cancelled() {
         return None;
     }

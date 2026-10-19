@@ -111,7 +111,8 @@ pub fn parse_spec(spec: &str) -> Vec<Param> {
             Kind::Color(crate::color_picker_ui::parse_hex(default))
         } else if v == "doc" {
             Kind::Document
-        } else if v == "json" || v.starts_with("layer id") || v.starts_with('[') || v.starts_with('{') {
+        } else if v == "json" || v.starts_with("layer id") || v.starts_with('[') || v.starts_with('{') || v.trim_end_matches('?') == "index|name" {
+            // `index|name`: a reference (an alpha channel…) the dialog sets through another control.
             Kind::Json
         } else if let Some(n) = v.strip_prefix("int[").and_then(|r| r.strip_suffix(']')).and_then(|n| n.parse().ok()) {
             Kind::Grid(n)
@@ -468,6 +469,9 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     if crate::blur_pins::handles(command) {
         crate::blur_pins::init(app, &mut fields);
     }
+    if command == LENS_BLUR {
+        lens_blur_channels(app, &mut fields);
+    }
     if parse_spec(spec.params).iter().any(|p| p.kind == Kind::Document) {
         // The document picker lists every open document (params refer to them by index).
         let names: Vec<String> = app.session.documents().iter().map(|d| d.doc.name.clone()).collect();
@@ -592,6 +596,37 @@ fn choice_label(v: &str) -> String {
 
 fn uses_logarithmic_slider(min: f32, max: f32) -> bool {
     min > 0.0 && max / min > 500.0
+}
+
+const LENS_BLUR: &str = "filter.blur.lensBlur";
+
+/// Lens Blur's Depth Map Source lists the document's alpha channels after None, Transparency
+/// and Layer Mask, as in Photoshop (#7400): their names go to `__channels`. A `channel` source
+/// without a channel this document has (references aren't remembered) opens as None.
+fn lens_blur_channels(app: &PhotocraftApp, f: &mut Map<String, Value>) {
+    let names: Vec<String> = app.session.active().map(|d| d.doc.channels.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
+    let known = f.get("depthChannel").and_then(|v| channel_index(v, &names)).is_some();
+    if f.get("depthMap").and_then(Value::as_str) == Some("channel") && !known {
+        f.insert("depthMap".into(), json!("none"));
+        f.remove("depthChannel");
+    }
+    f.insert("__channels".into(), json!(names));
+}
+
+/// Lens Blur's Source menu entry for the alpha channel at `index`. By index, not name: two
+/// channels may share a name, and each must be choosable.
+fn channel_choice(index: usize) -> String {
+    format!("channel:{index}")
+}
+
+/// The alpha channel `v` names (an index, or a name: the first channel so named), as the
+/// engine reads `depthChannel`.
+fn channel_index(v: &Value, names: &[String]) -> Option<usize> {
+    match v {
+        Value::Number(n) => n.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < names.len()),
+        Value::String(name) => names.iter().position(|n| n == name),
+        _ => None,
+    }
 }
 
 /// Schema dialogs whose `profile` menu lists the installed profiles after the built-ins.
@@ -767,6 +802,23 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                     let mut cur = f.get(&p.key).and_then(Value::as_str).unwrap_or(initial).to_string();
                     let labels: Vec<String> = options.iter().map(|o| choice_label(o)).collect();
                     let mut opts: Vec<(String, &str)> = options.iter().cloned().zip(labels.iter().map(String::as_str)).collect();
+                    // Lens Blur's Source: each alpha channel by its name, in place of `channel`.
+                    let depth = cmd == LENS_BLUR && p.key == "depthMap";
+                    let names: Vec<String> = if depth {
+                        f.get("__channels").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let channels: Vec<String> = (0..names.len()).map(channel_choice).collect();
+                    if depth {
+                        opts.retain(|(v, _)| v != "channel");
+                        opts.extend(channels.iter().cloned().zip(names.iter().map(String::as_str)));
+                        if cur == "channel"
+                            && let Some(i) = f.get("depthChannel").and_then(|v| channel_index(v, &names))
+                        {
+                            cur = channel_choice(i);
+                        }
+                    }
                     // Like Photoshop, the profile menus also list every profile installed in
                     // the system (printer and paper profiles), by description.
                     let installed = if p.key == "profile" && PROFILE_DIALOGS.contains(&cmd.as_str()) {
@@ -788,6 +840,12 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                         opts.push((cur.clone(), stem.as_str()));
                     }
                     crate::widgets::dropdown(ui, &format!("flt-{cmd}-{}", p.key), &mut cur, &opts, 170.0);
+                    if let Some(i) = cur.strip_prefix("channel:").filter(|_| depth).and_then(|i| i.parse::<usize>().ok()) {
+                        f.insert("depthChannel".into(), json!(i));
+                        cur = "channel".into();
+                    } else if depth {
+                        f.remove("depthChannel");
+                    }
                     f.insert(p.key.clone(), json!(cur));
                 });
             }
@@ -1466,6 +1524,38 @@ mod tests {
         let params = params_of(&fields);
         assert_eq!(params["colors"].as_u64(), Some(17));
         assert_eq!(params["amount"].as_f64(), Some(37.5));
+    }
+
+    /// #7400: Lens Blur's Source lists the document's alpha channels, by name, each choosable even
+    /// when two share a name; `depthChannel` is set through that menu, not shown as a field, and
+    /// like the other references it isn't remembered, so a remembered `channel` source opens as None.
+    #[test]
+    fn lens_blur_source_lists_the_alpha_channels() {
+        let spec = photocraft_engine::commands::find(LENS_BLUR).unwrap().params;
+        let params = parse_spec(spec);
+        assert!(params.iter().any(|p| p.key == "depthChannel" && p.kind == Kind::Json), "depthChannel is no dialog field");
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 20, "height": 10})).unwrap();
+        app.run("channel.new", json!({"name": "Depth Map", "fill": "white"})).unwrap();
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        assert_eq!(app.ui.dialog_mut(id).unwrap().fields["__channels"], json!(["Depth Map"]));
+        // The menu's values are channel indices, so two channels with one name are both choosable.
+        app.run("channel.new", json!({"name": "Depth Map", "fill": "black"})).unwrap();
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        let names: Vec<String> = serde_json::from_value(app.ui.dialog_mut(id).unwrap().fields["__channels"].clone()).unwrap();
+        assert_eq!(names, ["Depth Map", "Depth Map"]);
+        assert_eq!((channel_choice(0), channel_choice(1)), ("channel:0".to_string(), "channel:1".to_string()));
+        assert_eq!(channel_index(&json!(1), &names), Some(1), "the second one by its index");
+        assert_eq!(channel_index(&json!("Depth Map"), &names), Some(0), "a name is the first so named, as the engine reads it");
+        assert_eq!(channel_index(&json!(2), &names), None);
+
+        app.session.prefs.edit(|p| {
+            p.dialogs.insert(LENS_BLUR.into(), json!({"depthMap": "channel", "depthChannel": "Depth Map"}));
+        });
+        let id = open(&mut app, LENS_BLUR).unwrap();
+        let f = &app.ui.dialog_mut(id).unwrap().fields;
+        assert_eq!(f["depthMap"], "none", "no channel was remembered with it");
+        assert!(f.get("depthChannel").is_none());
     }
 
     #[test]

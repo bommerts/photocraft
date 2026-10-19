@@ -76,7 +76,8 @@ pub(crate) fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
     if deg.rem_euclid(360.0).abs() < 1e-9 {
         return Ok(json!({"width": s.active().map(|d| d.doc.size.width), "height": s.active().map(|d| d.doc.size.height)}));
     }
-    let bg = s.tools.background;
+    // The Background stays opaque, whatever the background colour's alpha.
+    let bg = [s.tools.background[0], s.tools.background[1], s.tools.background[2], 1.0];
     // Color Sampler points turn with the canvas (the same map the edit applies to the geometry).
     // They are pixel indices, so map the pixel's centre, as the warp samples the pixels.
     {

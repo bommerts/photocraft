@@ -68,7 +68,7 @@ pub(crate) fn after_command(s: &mut Session, id: &str) {
             let now = st.doc.layer(layer);
             let was = prev.layer(layer);
             let surf_eq = |a: Option<&Surface>, b: Option<&Surface>| match (a, b) {
-                (Some(a), Some(b)) => crate_fingerprint(a) == crate_fingerprint(b),
+                (Some(a), Some(b)) => a.format() == b.format() && a.default_pixel() == b.default_pixel() && crate_fingerprint(a) == crate_fingerprint(b),
                 (None, None) => true,
                 _ => false,
             };
@@ -214,7 +214,9 @@ fn fade(s: &mut Session, p: &Value) -> Result<Value> {
     if now.format() != before.format() {
         return Err(EngineError::Other("can't fade a step that changed the layer's pixel format".into()));
     }
-    let area = before.content_bounds().union(&now.content_bounds());
+    // A uniform mask can change every pixel without storing a single tile. In that case
+    // the content bounds are empty, but Fade must still blend across the canvas.
+    let area = if before.default_pixel() != now.default_pixel() { st.doc.bounds() } else { before.content_bounds().union(&now.content_bounds()) };
     let label = format!("Fade {}", src.label);
     s.edit(&label, |doc, _| {
         let l = doc.layer_mut(src.layer).ok_or(EngineError::NoLayer(src.layer))?;
@@ -329,7 +331,7 @@ fn can_caf(s: &Session) -> std::result::Result<(), String> {
 }
 
 /// Mask surface (gray) of an alpha channel by index or name.
-fn channel_mask<'a>(doc: &'a Document, v: &Value) -> Option<&'a Surface> {
+pub(crate) fn channel_mask<'a>(doc: &'a Document, v: &Value) -> Option<&'a Surface> {
     match v {
         Value::Number(n) => doc.channels.get(n.as_u64()? as usize).map(|c| &c.surface),
         Value::String(name) => doc.channels.iter().find(|c| c.name == *name).map(|c| &c.surface),
@@ -719,6 +721,13 @@ fn content_aware_fill_as(s: &mut Session, p: &Value, cmd: &'static str, label: &
             let cancel = || ctx.cancelled();
             let plan = content_aware_plan_with(&doc, id, &p, cmd, &photocraft_raster::Interrupt::cancel_only(&cancel))?;
             let CafPlan { layer, rect, fmt, img, layer_px, cover, hole, source, opts, output, .. } = plan;
+            // Patches come only from the sampling area outside the fill area. With none (a
+            // Rectangular `margin` of 0, a Custom area inside the selection or off the canvas)
+            // the fill would be black (#6532), so refuse instead. The workspace's preview builds
+            // the same plan and may show an empty area while the Sampling Brush adds to it.
+            if !source.iter().any(|s| *s) {
+                return Err(bad(cmd, "nothing to sample from: the sampling area has no pixels outside the fill area"));
+            }
             let (w, h) = (rect.width() as usize, rect.height() as usize);
             let n = fmt.channels();
             // The fill changes only the fill area: keep the layer's pixels and the coverage over

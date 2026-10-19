@@ -757,7 +757,12 @@ fn count_add(s: &mut Session, p: &Value) -> Result<Value> {
     if !at[0].is_finite() || !at[1].is_finite() {
         return Err(bad("count.add", "coordinates must be finite"));
     }
-    let gi = p.get("group").and_then(Value::as_u64).map(|v| v as usize);
+    let gi = p.get("group").and_then(Value::as_u64).map(|v| usize::try_from(v).map_err(|_| bad("count.add", "no such group"))).transpose()?;
+    // The first marker creates group zero, but an explicit target must never be redirected.
+    let group_count = doc(s)?.measurement.count_groups.len().max(1);
+    if gi.is_some_and(|i| i >= group_count) {
+        return Err(bad("count.add", "no such group"));
+    }
     let n = s.edit("Count", |d, _| {
         if d.measurement.count_groups.is_empty() {
             let g = new_group(d, None, None);
@@ -858,7 +863,9 @@ fn count_delete_group(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Delete Count Group", |d, _| {
         d.measurement.count_groups.remove(g);
         let n = d.measurement.count_groups.len();
-        d.measurement.active_count_group = d.measurement.active_count_group.min(n.saturating_sub(1));
+        // Removing a group before the active one shifts it down a slot.
+        let a = d.measurement.active_count_group;
+        d.measurement.active_count_group = (if g < a { a - 1 } else { a }).min(n.saturating_sub(1));
         Ok(())
     })?;
     Ok(count_json(doc(s)?.as_ref()))

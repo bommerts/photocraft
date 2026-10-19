@@ -333,7 +333,12 @@ fn warp(
     // A source straddling the horizon draws only its front side: the inverse w at a pixel has the
     // sign of the forward w at the source point it samples, and the other side would show as a
     // mirrored copy wrapped round infinity (#4863).
-    let front = side.is_none().then(|| h.front_side([src_rect.x0 as f64, src_rect.y0 as f64, src_rect.x1 as f64, src_rect.y1 as f64]));
+    // A clip wholly on one side of the inverse horizon only samples that side, so that side is drawn
+    // (a Perspective Crop low on a converging photo has most of the layer beyond its horizon, #7557).
+    let clip_w = clip.map(|c| [(c.x0, c.y0), (c.x1, c.y0), (c.x1, c.y1), (c.x0, c.y1)].map(|(x, y)| inv.w(x as f64, y as f64)));
+    let clip_side = clip_w.and_then(|cw| [1.0, -1.0].into_iter().find(|&s| cw.iter().all(|&w| s * w > 0.0)));
+    let front =
+        side.is_none().then(|| clip_side.unwrap_or_else(|| h.front_side([src_rect.x0 as f64, src_rect.y0 as f64, src_rect.x1 as f64, src_rect.y1 as f64])));
     let bounds = corner_bounds(&corners);
     let dst = match (clip, bounds) {
         // The warped corners only bound the result while the whole source is in front of the horizon.
@@ -711,6 +716,22 @@ mod tests {
         // A quad wholly in front of the horizon is drawn exactly as before.
         let ok = Homography::rect_to_quad([0.0, 0.0, 100.0, 100.0], [[0.0, 0.0], [300.0, 0.0], [155.0, 155.0], [0.0, 300.0]]).unwrap();
         assert_eq!(ok.front_side([0.0, 0.0, 100.0, 100.0]), ok.w(50.0, 50.0).signum());
+    }
+
+    /// #7557: a Perspective Crop quad low on a strongly converging photo puts the horizon across
+    /// the layer with most of it (and its centre) on the far side. The clip maps wholly into the
+    /// quad, so its side is the one drawn, not the source's majority.
+    #[test]
+    fn a_clip_wholly_on_one_side_draws_that_side() {
+        let mut s = rgba();
+        s.fill_rect(Rect::new(0, 0, 100, 100), &[1.0, 0.0, 0.0, 1.0]);
+        let q = [[40.0, 70.0], [60.0, 70.0], [90.0, 95.0], [10.0, 95.0]];
+        let h = quad_to_rect(&q, 50.0, 39.0).unwrap();
+        assert!(h.front_side([0.0, 0.0, 100.0, 100.0]) * h.w(50.0, 80.0) < 0.0, "the source's majority is behind the quad's side");
+        for interp in [Interp::Nearest, Interp::Bilinear, Interp::Bicubic] {
+            let w = warp_surface_clipped(&s, s.content_bounds(), &h, interp, Rect::new(0, 0, 50, 39)).unwrap();
+            assert_eq!(w.rgba(25, 20), [1.0, 0.0, 0.0, 1.0], "{interp:?}");
+        }
     }
 
     #[test]

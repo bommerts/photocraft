@@ -1276,9 +1276,14 @@ fn button_size(ui: &Ui, label: &str, min_width: f32) -> Vec2 {
     button_layout(ui, label, min_width, None, Tokens::get(ui.ctx()).text).1
 }
 
+/// The height of a primary or secondary button (and so of a dialog's button row).
+pub fn button_height(ctx: &egui::Context) -> f32 {
+    if Tokens::get(ctx).pro { 28.0 } else { 30.0 }
+}
+
 fn button_layout(ui: &Ui, label: &str, min_width: f32, height: Option<f32>, fg: Color32) -> (std::sync::Arc<egui::Galley>, Vec2) {
     let galley = ui.painter().layout_no_wrap(tl!(label).to_owned(), theme::medium(13.0), fg);
-    let h = height.unwrap_or(if Tokens::get(ui.ctx()).pro { 28.0 } else { 30.0 });
+    let h = height.unwrap_or(button_height(ui.ctx()));
     let size = vec2((galley.size().x + 28.0).max(min_width), h);
     (galley, size)
 }

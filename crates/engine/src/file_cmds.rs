@@ -234,7 +234,12 @@ pub fn same_file(a: &str, b: &str) -> bool {
     }
     #[cfg(windows)]
     {
-        // NTFS and FAT compare names without case.
+        // The volume serial number and file index of each, as unix compares dev and inode, so a
+        // hard link (another name for the file) is the same file.
+        if let Ok(same) = same_file::is_same_file(a, b) {
+            return same;
+        }
+        // Should a file not open: NTFS and FAT compare names without case.
         if let (Ok(x), Ok(y)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
             return x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase();
         }
@@ -481,6 +486,15 @@ fn revert(s: &mut Session) -> Result<Value> {
 fn save_a_copy(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path", "file.saveACopy")?.to_string();
     let d = s.active().ok_or(EngineError::NoDocument)?;
+    // A copy over the document's own file replaces it, and a flat or lossy format can't be
+    // undone, so it takes an explicit `overwrite` (#7437). The desktop dialog writes through the
+    // shell, after the OS has confirmed the replace.
+    if d.path.as_deref().is_some_and(|own| same_file(&path, own)) && p.get("overwrite").and_then(Value::as_bool) != Some(true) {
+        return Err(EngineError::BadParams {
+            cmd: "file.saveACopy".into(),
+            msg: "`path` is the document's own file, so the copy would replace it: choose another path, or pass \"overwrite\": true".into(),
+        });
+    }
     let mut doc = (*d.doc).clone();
     if p.get("layers").and_then(Value::as_bool) == Some(false) {
         // "Layers" unchecked in Save a Copy: write the flattened image.
@@ -1639,7 +1653,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save a Copy…",
             &["File"],
             Some("Cmd+Alt+S"),
-            r##"{"path":str (format from the extension),"quality":0..12? (JPEG),"layers":bool=true,"tiffLayers":bool=false (TIFF: keep the layers; flat by default),"tgaBits":24|32? (TGA: 32 writes the alpha channel, or else the transparency, as the alpha; unset, 32 with an alpha channel or transparency, else 24),"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16)}"##,
+            r##"{"path":str (format from the extension),"quality":0..12? (JPEG),"layers":bool=true,"overwrite":bool=false (replace the document's own file),"tiffLayers":bool=false (TIFF: keep the layers; flat by default),"tgaBits":24|32? (TGA: 32 writes the alpha channel, or else the transparency, as the alpha; unset, 32 with an alpha channel or transparency, else 24),"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16)}"##,
             native_doc,
             save_a_copy
         ),

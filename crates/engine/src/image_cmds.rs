@@ -549,8 +549,10 @@ fn crop_target(p: &Value) -> Result<CropTarget> {
     let side = |key: &str| -> Result<Option<u32>> {
         match p.get(key) {
             None | Some(Value::Null) => Ok(None),
+            // Whole-number floats (`100.0`) count too, as for the crop rectangle.
             Some(v) => v
                 .as_u64()
+                .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0 && (0.0..=f64::from(MAX_CROP_SIDE)).contains(f)).map(|f| f as u64))
                 .and_then(|n| u32::try_from(n).ok())
                 .filter(|n| (1..=MAX_CROP_SIDE as u32).contains(n))
                 .map(Some)
@@ -1419,6 +1421,14 @@ mod tests {
     }
 
     #[test]
+    fn crop_target_accepts_whole_number_floats() {
+        // `json.dumps(100.0)` and many other JSON writers send whole numbers as floats.
+        let mut s = session();
+        s.execute("image.crop", json!({"x": 0, "y": 0, "width": 20, "height": 10, "targetWidth": 40.0, "targetHeight": 20.0})).unwrap();
+        assert_eq!(doc(&s).size, Size::new(40, 20));
+    }
+
+    #[test]
     fn crop_target_rejects_bad_params_without_changing_the_document() {
         let rect = json!({"x": 0, "y": 0, "width": 10, "height": 10});
         let bad_params = [
@@ -1427,6 +1437,10 @@ mod tests {
             json!({"targetWidth": 0, "targetHeight": 10}),
             json!({"targetWidth": -5, "targetHeight": 10}),
             json!({"targetWidth": 10.5, "targetHeight": 10}),
+            json!({"targetWidth": -1.0, "targetHeight": 10}),
+            json!({"targetWidth": 0.0, "targetHeight": 10}),
+            json!({"targetWidth": 1e39, "targetHeight": 10}),
+            json!({"targetWidth": 300_001.0, "targetHeight": 10}),
             json!({"targetWidth": "10", "targetHeight": 10}),
             json!({"targetWidth": 300_001, "targetHeight": 10}),
             json!({"targetWidth": 4_294_967_306_u64, "targetHeight": 10}),

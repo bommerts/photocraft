@@ -881,9 +881,16 @@ macro_rules! ev {
                 Some(m) => step($id, Value::Object(m)),
                 None => Mapped::Unsupported { harmless: false },
             },
-            to: |_, p| fields_to(p, $fields, desc("null")),
+            to: |_, p| if pixel_target(p) { fields_to(p, $fields, desc("null")) } else { None },
         }
     };
+}
+
+/// Whether `p` edits the layer's pixels: no `"target"` or `"target":"pixels"`. Photoshop's
+/// descriptor for a plain event has no field for a mask, Quick Mask or channel target, so such
+/// a step can't be exported faithfully.
+fn pixel_target(p: &Value) -> bool {
+    p.get("target").is_none_or(|t| t.as_str() == Some("pixels"))
 }
 
 const INTERPOLATION: &[(&str, &str)] = &[

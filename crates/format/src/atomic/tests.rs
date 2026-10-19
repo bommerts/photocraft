@@ -69,8 +69,8 @@ impl AtomicFs for Faulty {
     fn sync_dir(&self, dir: &Path) -> io::Result<()> {
         RealFs.sync_dir(dir)
     }
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()> {
-        RealFs.copy_permissions(from, to)
+    fn copy_metadata(&self, from: &Path, to: &Path) -> io::Result<()> {
+        RealFs.copy_metadata(from, to)
     }
 }
 
@@ -201,8 +201,8 @@ impl AtomicFs for ReadOnlyTarget {
     fn sync_dir(&self, dir: &Path) -> io::Result<()> {
         RealFs.sync_dir(dir)
     }
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()> {
-        RealFs.copy_permissions(from, to)
+    fn copy_metadata(&self, from: &Path, to: &Path) -> io::Result<()> {
+        RealFs.copy_metadata(from, to)
     }
 }
 

@@ -82,6 +82,15 @@ fn rotate_arbitrary_other_modes() {
 }
 
 #[test]
+fn rotate_arbitrary_keeps_the_background_opaque_with_a_translucent_background_colour() {
+    let mut s = session(40, 20, 8, "rgb");
+    s.execute("tools.setColors", json!({"background": "#00ff0080"})).unwrap();
+    s.execute("image.rotation.arbitrary", json!({"angle": 30})).unwrap();
+    let corner = doc(&s).layers[0].surface().unwrap().rgba(0, 0);
+    assert_eq!(corner, [0.0, 1.0, 0.0, 1.0], "the uncovered corner is opaque background colour");
+}
+
+#[test]
 fn rotate_arbitrary_keeps_the_full_precision_angle() {
     // Rounded to f32 this angle crosses a whole pixel: 1003 px instead of 1002, so a rotated crop
     // that sized its canvas with `rotated_size` at f64 would land 1 px off.

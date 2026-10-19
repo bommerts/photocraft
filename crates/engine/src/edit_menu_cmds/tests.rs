@@ -58,6 +58,38 @@ fn fade_with_blend_mode_and_invalidation() {
 }
 
 #[test]
+fn fade_uniform_layer_mask_invert_at_all_depths() {
+    for depth in [8, 16, 32] {
+        for (opacity, expected) in [(0, 1.0), (50, 0.5), (100, 0.0)] {
+            let mut s = session(depth);
+            s.execute("layer.layerMask.revealAll", json!({})).unwrap();
+            s.execute("channel.target", json!({"channel": "mask"})).unwrap();
+            let mask_pixel = |s: &Session| {
+                let layer = active(s);
+                let mask = &layer.mask.as_ref().unwrap().surface;
+                mask.pixel(5, 5)[0]
+            };
+            assert!((mask_pixel(&s) - 1.0).abs() < 0.01);
+            s.execute("image.adjustments.invert", json!({})).unwrap();
+            assert!(mask_pixel(&s) < 0.01, "depth {depth}: invert changed the mask");
+            assert!(s.edit_state.fade.as_ref().is_some_and(|f| f.mask), "depth {depth}: Fade must target the mask");
+            let history_before_fade = s.active().unwrap().history.past_len();
+
+            s.execute("edit.fade", json!({"opacity": opacity})).unwrap();
+            for (x, y) in [(0, 0), (5, 5), (63, 47)] {
+                let pixel = active(&s).mask.as_ref().unwrap().surface.pixel(x, y)[0];
+                assert!((pixel - expected).abs() < 0.02, "depth {depth}, opacity {opacity}, ({x}, {y}): {pixel}");
+            }
+            assert_eq!(s.active().unwrap().history.past_len(), history_before_fade + 1);
+            assert!(s.undo());
+            assert!(mask_pixel(&s) < 0.01, "undo restores inverted mask");
+            assert!(s.redo());
+            assert!((mask_pixel(&s) - expected).abs() < 0.02, "redo restores faded mask");
+        }
+    }
+}
+
+#[test]
 fn purge_commands() {
     let mut s = session(8);
     assert!(!s.is_enabled("edit.purge.undo"));
@@ -105,10 +137,15 @@ fn blob_session(depth: u32) -> Session {
 fn content_aware_fill_huge_area_neither_panics_nor_wraps() {
     let mut s = blob_session(8);
     // `[1e30, 0, 1e30, 10]` overflowed the i32 additions in the area parser (a debug-build
-    // panic, a garbage sampling window in release); the additions saturate now, so this is
-    // simply a whole-canvas window.
-    let r = s.execute("edit.contentAwareFill", json!({"sampling": "custom", "area": [1e30, 0.0, 1e30, 10.0], "colorAdaptation": "none"})).unwrap();
-    assert!(r["filled"].as_u64().unwrap() > 100);
+    // panic, a garbage sampling window in release); the additions saturate now, so the area lies
+    // wholly right of the canvas: nothing to sample, which is an error, not a black fill (#6532).
+    let before = s.active().unwrap().doc.clone();
+    let past = s.active().unwrap().history.past_len();
+    let err = s.execute("edit.contentAwareFill", json!({"sampling": "custom", "area": [1e30, 0.0, 1e30, 10.0], "colorAdaptation": "none"})).unwrap_err();
+    assert!(err.to_string().contains("nothing to sample from"), "{err}");
+    let st = s.active().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&before, &st.doc), "the document changed");
+    assert_eq!(st.history.past_len(), past, "a history step was recorded");
     // A malformed area names the problem instead of silently falling back.
     for area in [json!([0.0, 0.0, null, 10.0]), json!([0.0, 0.0, 10.0]), json!("nope")] {
         let err = s.execute("edit.contentAwareFill", json!({"sampling": "custom", "area": area})).unwrap_err();
@@ -310,6 +347,23 @@ fn content_aware_fill_takes_the_workspace_edits() {
     // The command fills with the same plan; `layer` names the layer even when another is active.
     let r = s.execute("edit.contentAwareFill", json!({"sampling": "rectangular", "fillEdits": [{"op": "expand", "by": 2}], "layer": id.0})).unwrap();
     assert!(r["filled"].as_u64().unwrap() > 2800);
+}
+
+/// #6532: a sampling area with no pixels outside the fill area is refused instead of filling it
+/// black, and leaves the document untouched; any margin past the selection fills.
+#[test]
+fn content_aware_fill_with_nothing_to_sample_is_refused() {
+    let mut s = blob_session(8);
+    let before = px(&s, 30, 22);
+    let revision = s.active().unwrap().revision;
+    for p in [json!({"sampling": "rectangular", "margin": 0}), json!({"sampling": "custom", "area": [28, 18, 4, 4]})] {
+        let e = s.execute("edit.contentAwareFill", p.clone()).unwrap_err().to_string();
+        assert!(e.contains("nothing to sample from"), "{p}: {e}");
+        assert_eq!(px(&s, 30, 22), before, "{p}: nothing was filled");
+        assert_eq!(s.active().unwrap().revision, revision, "{p}: no history step");
+    }
+    s.execute("edit.contentAwareFill", json!({"sampling": "rectangular", "margin": 1})).unwrap();
+    assert_ne!(px(&s, 30, 22), before, "the red blob is filled from around the selection");
 }
 
 #[test]
