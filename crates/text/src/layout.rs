@@ -192,6 +192,8 @@ pub struct LineInfo {
     pub ascent: f32,
     pub descent: f32,
     pub paragraph: usize,
+    /// Alignment of this visual line, shared by glyph placement and pointer hit testing.
+    pub align: TextAlign,
 }
 
 /// A grapheme cluster (caret stops, hit testing, selection), in line space.
@@ -257,7 +259,7 @@ impl TextLayout {
 
     /// The visual line nearest to a line-space ordinate, including its ascent and descent.
     /// Pointer hit testing uses this even where adjacent lines share a caret byte offset.
-    fn closest_line(&self, y: f32) -> Option<(usize, &LineInfo)> {
+    pub fn closest_line(&self, y: f32) -> Option<(usize, &LineInfo)> {
         self.lines.iter().enumerate().min_by(|a, b| {
             let d = |l: &LineInfo| {
                 if y < l.baseline - l.ascent {
@@ -1078,6 +1080,7 @@ impl Layouter {
                     ascent,
                     descent,
                     paragraph: pi,
+                    align: ps.align,
                 });
             }
             pending_space += ps.space_after_pt * k;

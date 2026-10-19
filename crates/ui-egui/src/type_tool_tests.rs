@@ -678,6 +678,48 @@ fn type_path_hit_uses_outline_and_selected_saved_path() {
     assert!(super::hit_path(&app, 80.0, 40.0).is_none());
 }
 
+/// Overflow must not make pointer projection pick hidden glyphs on another lap or paragraph.
+#[test]
+fn overflowing_path_hit_uses_each_lines_visible_alignment_lap() {
+    use photocraft_doc::text::{ParagraphRun, ParagraphStyle, TextAlign, TextShape};
+    use photocraft_doc::vector::Subpath;
+    for alignments in [vec![TextAlign::Center], vec![TextAlign::Left, TextAlign::Center, TextAlign::Right]] {
+        for flip in [false, true] {
+            let line = "M".repeat(100);
+            let text = vec![line.as_str(); alignments.len()].join("\n");
+            let mut path = Subpath::polyline(&[(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]);
+            path.closed = true;
+            let layer = photocraft_doc::TextLayer {
+                text: text.clone(),
+                size_pt: 36.0,
+                shape: TextShape::Path { path, start: 0.0, flip },
+                paragraphs: alignments
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &align)| ParagraphRun {
+                        len: line.len() + usize::from(i + 1 < alignments.len()),
+                        style: ParagraphStyle { align, ..Default::default() },
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let layout = photocraft_text::TextEngine::new().layout(&layer, 72.0);
+            let warp = photocraft_text::warp::Warp::on_path(&layer.shape).unwrap();
+            let length = warp.closed_length().unwrap();
+            for (i, &align) in alignments.iter().enumerate() {
+                let line = &layout.lines[i];
+                let x = if align == TextAlign::Left { length * 0.125 } else { -length * 0.375 };
+                let y = line.baseline - line.ascent * 0.35;
+                let (px, py) = warp.apply(x, f64::from(y));
+                let (qx, qy) = super::project_text(&warp, &layout, px as f32, py as f32).unwrap();
+                assert!((f64::from(qx) - x).abs() < 1e-3, "{align:?}: projected {qx} instead of {x}");
+                assert!((qy - y).abs() < 1e-3);
+                assert_eq!(photocraft_text::hit_char(&layout, &text, qx, qy).0, photocraft_text::hit_char(&layout, &text, x as f32, y).0);
+            }
+        }
+    }
+}
+
 /// #668: ⌘/Ctrl+T while typing shows or hides the Character panel, as in Photoshop, instead of
 /// starting Free Transform on the layer being typed into.
 #[test]

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
 use egui::{Color32, Pos2, Stroke};
+use photocraft_doc::text::TextAlign;
 use photocraft_doc::{Document, LayerContent, LayerId, TextLayer};
 use photocraft_geom::{Affine, Point};
 use photocraft_text::TextLayout;
@@ -58,17 +59,18 @@ fn path_warp(app: &PhotocraftApp, id: LayerId) -> Option<Warp> {
     Warp::on_path(&text_layer(&app.session.active()?.doc, id)?.shape)
 }
 
-/// Choose the equivalent closed-path position nearest the aligned text's layout extent.
+/// Normalize projection into the nearest visual line's alignment-specific visible lap.
 fn project_text(warp: &Warp, layout: &TextLayout, x: f32, y: f32) -> Option<(f32, f32)> {
     let (mut x, y) = warp.project(f64::from(x), f64::from(y))?;
-    if let Some(length) = warp.closed_length()
-        && let Some(bounds) = layout.bounds()
-    {
-        // Centre/right alignment lays out to the left of the clicked origin. Pick the lap
-        // nearest the text's actual extent rather than treating it as the end of the circle.
-        let distance = |v: f64| (f64::from(bounds[0]) - v).max(0.0) + (v - f64::from(bounds[2])).max(0.0);
-        if distance(x - length) < distance(x) {
-            x -= length;
+    if let Some(length) = warp.closed_length() {
+        let (_, cross) = layout.to_line(x as f32, y as f32);
+        let align = layout.closest_line(cross).map(|(_, line)| line.align).unwrap_or_default();
+        // The unsigned projection can land on hidden overflow when layout spans several laps.
+        // Match place_glyph_aligned, including the zero endpoint of right-aligned text.
+        match align {
+            TextAlign::Center | TextAlign::JustifyCenter if x >= length / 2.0 => x -= length,
+            TextAlign::Right | TextAlign::JustifyRight if x > 0.0 => x -= length,
+            _ => {}
         }
     }
     Some((x as f32, y as f32))
