@@ -1176,10 +1176,14 @@ pub fn draw_overlay(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewX
     let (a, b) = (byte_of(&text, ed.caret.min(ed.anchor)), byte_of(&text, ed.caret.max(ed.anchor)));
     if a < b {
         let fill = Color32::from_rgba_unmultiplied(t.accent.r(), t.accent.g(), t.accent.b(), 110);
-        if warp.is_some() {
+        if let Some(warp) = &warp {
             // One quad per cluster: a single rectangle across a circle cuts through its centre.
             for cluster in l.clusters.iter().filter(|c| c.range.start >= a && c.range.end <= b) {
                 let Some(line) = l.lines.get(cluster.line) else { continue };
+                let (center, _) = l.to_text(cluster.x + cluster.advance * 0.5, line.baseline);
+                if matches!(warp.place_glyph_aligned(f64::from(center), line.align), photocraft_text::warp::Placement::Hidden) {
+                    continue;
+                }
                 let (x0, x1) = (cluster.x, cluster.x + cluster.advance);
                 let (top, bot) = (line.baseline - line.ascent, line.baseline + line.descent);
                 painter.add(egui::Shape::convex_polygon(vec![scr(x0, top), scr(x1, top), scr(x1, bot), scr(x0, bot)], fill, Stroke::NONE));

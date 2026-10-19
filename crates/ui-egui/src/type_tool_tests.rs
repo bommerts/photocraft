@@ -720,6 +720,52 @@ fn overflowing_path_hit_uses_each_lines_visible_alignment_lap() {
     }
 }
 
+/// Selecting hidden overflow must not paint a highlight over unselected visible text.
+#[test]
+fn path_selection_overlay_excludes_hidden_laps() {
+    for align in ["left", "center", "right"] {
+        for flip in [false, true] {
+            let mut app = new_app();
+            let shape = app.run("shape.create", json!({"kind": "ellipse", "rect": [160, 160, 400, 400]})).unwrap()["layer"].as_u64().unwrap();
+            let id = LayerId(
+                app.run("type.create", json!({"text": "M".repeat(100), "size": 36, "path": {"shape": shape, "flip": flip}})).unwrap()["layer"]
+                    .as_u64()
+                    .unwrap(),
+            );
+            app.run("type.setStyle", json!({"layer": id.0, "align": align})).unwrap();
+            super::edit_active(&mut app).unwrap();
+            let xf = ViewXform {
+                rect: egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 700.0)),
+                zoom: 1.0,
+                center: [360.0, 360.0],
+                flip: false,
+                rotation: 0.0,
+                aspect: 1.0,
+            };
+            let mut h = Harness::builder()
+                .with_size(vec2(800.0, 700.0))
+                .build_ui_state(move |ui, app: &mut PhotocraftApp| super::draw_overlay(app, ui.painter(), &xf), app);
+            PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ProMedium);
+            let visible = match align {
+                "left" => 0,
+                "center" => 50,
+                _ => 99,
+            };
+            let hidden = if align == "left" { 99 } else { 0 };
+            for (index, expected) in [(hidden, 0), (visible, 1)] {
+                let ed = h.state_mut().ui.text_edit.as_mut().unwrap();
+                ed.anchor = index;
+                ed.caret = index + 1;
+                h.run_steps(2);
+                let accent = crate::theme::Tokens::get(&h.ctx).accent;
+                let fill = egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 110);
+                let highlights = h.output().shapes.iter().filter(|s| matches!(&s.shape, egui::Shape::Path(p) if p.closed && p.fill == fill)).count();
+                assert_eq!(highlights, expected, "{align}, flip={flip}, selected character {index}");
+            }
+        }
+    }
+}
+
 /// #668: ⌘/Ctrl+T while typing shows or hides the Character panel, as in Photoshop, instead of
 /// starting Free Transform on the layer being typed into.
 #[test]
