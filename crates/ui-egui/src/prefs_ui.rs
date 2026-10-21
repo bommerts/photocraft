@@ -896,6 +896,75 @@ pub fn is_modifier_key(key: egui::Key) -> bool {
     matches!(key, ShiftLeft | ShiftRight | ControlLeft | ControlRight | AltLeft | AltRight | SuperLeft | SuperRight)
 }
 
+/// Modifier bits a physical modifier-key press contributes when egui leaves them out of
+/// [`Modifiers`] on the key event (#7190).
+fn modifier_key_modifiers(key: egui::Key) -> egui::Modifiers {
+    use egui::Key::*;
+    match key {
+        ShiftLeft | ShiftRight => egui::Modifiers::SHIFT,
+        ControlLeft | ControlRight => egui::Modifiers::CTRL,
+        AltLeft | AltRight => egui::Modifiers::ALT,
+        SuperLeft | SuperRight => egui::Modifiers::COMMAND,
+        _ => egui::Modifiers::NONE,
+    }
+}
+
+fn capture_mods_field(v: Option<&Value>) -> egui::Modifiers {
+    let o = v.and_then(Value::as_object);
+    egui::Modifiers {
+        shift: o.and_then(|o| o.get("shift")).and_then(Value::as_bool).unwrap_or(false),
+        ctrl: o.and_then(|o| o.get("ctrl")).and_then(Value::as_bool).unwrap_or(false),
+        alt: o.and_then(|o| o.get("alt")).and_then(Value::as_bool).unwrap_or(false),
+        command: o.and_then(|o| o.get("command")).and_then(Value::as_bool).unwrap_or(false),
+        mac_cmd: o.and_then(|o| o.get("mac_cmd")).and_then(Value::as_bool).unwrap_or(false),
+    }
+}
+
+fn capture_mods_json(m: egui::Modifiers) -> Value {
+    json!({
+        "shift": m.shift,
+        "ctrl": m.ctrl,
+        "alt": m.alt,
+        "command": m.command,
+        "mac_cmd": m.mac_cmd,
+    })
+}
+
+/// While capture is active: refresh held modifiers (including across frames via dialog
+/// `captureMods`) and, if a non-modifier key was pressed this frame, return it with the
+/// modifiers held with it.
+///
+/// #7190 root cause: capture used to [`find_map`](Iterator::find_map) the first non-modifier
+/// [`Event::Key`] and pass only that event's `modifiers` into [`shortcut_text`]. On Linux and
+/// Windows, winit/egui often reports `ShiftLeft`/`ShiftRight` (and sometimes the letter key) with
+/// [`Modifiers::NONE`], and the modifier down and the letter down often land in separate UI
+/// frames. Shift was then missing from the stored binding (`F6` instead of `Shift+F6`). Like #292
+/// for `ControlLeft`, we walk the frame's events, OR in [`modifier_key_modifiers`] for modifier
+/// keys, and persist accumulated modifiers in `captureMods` until capture ends.
+pub(crate) fn capture_key_press(capture_mods: egui::Modifiers, i: &egui::InputState) -> (egui::Modifiers, Option<(egui::Key, egui::Modifiers)>) {
+    let mut mods = capture_mods | i.modifiers;
+    let mut pressed = None;
+    for e in &i.events {
+        if let egui::Event::ModifiersChanged(m) = e {
+            mods = *m;
+        }
+        if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+            if is_modifier_key(*key) {
+                mods = *modifiers | modifier_key_modifiers(*key);
+                continue;
+            }
+            pressed = Some((*key, mods | *modifiers));
+            break;
+        }
+        if let egui::Event::Key { key, pressed: false, modifiers, .. } = e
+            && is_modifier_key(*key)
+        {
+            mods = *modifiers;
+        }
+    }
+    (mods, pressed)
+}
+
 // ------------------------------------------------------------------ menu routing
 
 /// Shell front ends for Edit-menu commands invoked without parameters (dialogs, pickers).
@@ -1875,14 +1944,11 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
         }
         p.alternates(id, main)
     };
+    let mut capture_mods = capture_mods_field(f.get("captureMods"));
     // Key capture for the selected command: its main key, or (Add Shortcut) one more key.
     if capture && tab == 0 && !selected.is_empty() {
-        let pressed = ui.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                egui::Event::Key { key, pressed: true, modifiers, .. } if !is_modifier_key(*key) => Some((*key, *modifiers)),
-                _ => None,
-            })
-        });
+        let (next_mods, pressed) = ui.input(|i| capture_key_press(capture_mods, i));
+        capture_mods = next_mods;
         if let Some((key, m)) = pressed {
             ui.input_mut(|i| {
                 i.consume_key(m, key);
@@ -2162,6 +2228,11 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
     f.insert("colors".into(), json!(colors));
     f.insert("selected".into(), json!(selected));
     f.insert("capture".into(), json!(capture));
+    if capture {
+        f.insert("captureMods".into(), capture_mods_json(capture_mods));
+    } else {
+        f.remove("captureMods");
+    }
     f.insert("message".into(), json!(message));
     f.insert("messageWarning".into(), json!(message_warning));
 }
@@ -3629,6 +3700,49 @@ mod tests {
         }
     }
 
+    /// #6212: `toolBrushes.owner` names the tool whose brush `last_brush` holds. A brush that
+    /// can't be remembered yet (a sampled tip too big to embed) leaves `last_brush` at the old
+    /// owner's brush, so the old owner stays saved: the next launch gives that brush back to it,
+    /// not to the tool selected since.
+    #[test]
+    fn the_saved_brush_owner_follows_the_saved_last_brush() {
+        use crate::state::Tool;
+        use photocraft_engine::paint::{GrayTile, TipShape};
+        let (mut app, store) = app_with_store();
+        let ctx = egui::Context::default();
+        tick(&mut app, &ctx);
+        app.session.tools.brush.size = 77.0;
+        app.session.tools.brush_changed();
+        crate::last_brush::persist(&mut app, &ctx);
+        crate::tool_memory::persist(&mut app, &ctx);
+        // The Brush's tip becomes a big sampled one, then the Eraser takes over that brush.
+        app.session.tools.brush.tip = TipShape::Sampled(GrayTile::from_fn(400, 300, |x, y| ((x * y) % 7) as f32 / 7.0));
+        app.session.tools.brush_changed();
+        app.ui.tool = Tool::Eraser;
+        crate::paint_mouse::sync_tool_brush(&mut app);
+        crate::last_brush::persist(&mut app, &ctx);
+        crate::tool_memory::persist(&mut app, &ctx);
+        tick(&mut app, &ctx);
+        let saved = stored(&store);
+        assert_eq!(saved["lastBrush"]["brush"]["size"], json!(77.0), "the big tip is not remembered yet");
+        assert_ne!(saved["toolBrushes"]["owner"], json!("Eraser"), "{saved}");
+        let (mut app2, _) = app_with_saved(store.lock().unwrap().clone());
+        tick(&mut app2, &ctx);
+        assert_eq!(app2.ui.brush_tool, Tool::Brush, "the 77 px brush is the Brush's");
+        assert_eq!(app2.session.tools.brush.size, 77.0);
+
+        // Once the Eraser's brush is saved, the Eraser owns it in the preferences too.
+        app.session.tools.brush.tip = TipShape::Round;
+        app.session.tools.brush.size = 33.0;
+        app.session.tools.brush_changed();
+        crate::last_brush::persist(&mut app, &ctx);
+        crate::tool_memory::persist(&mut app, &ctx);
+        tick(&mut app, &ctx);
+        let saved = stored(&store);
+        assert_eq!(saved["toolBrushes"]["owner"], json!("Eraser"), "{saved}");
+        assert_eq!(saved["lastBrush"]["brush"]["size"], json!(33.0));
+    }
+
     /// #6212: a damaged or hand-edited `toolBrushes` never panics: what reads back loads (clamped
     /// to the options bar's ranges), the rest is skipped and those tools start from the brush.
     #[test]
@@ -3678,6 +3792,7 @@ mod tests {
         }
         app.ui.tool = Tool::Smudge;
         crate::paint_mouse::sync_tool_brush(&mut app);
+        crate::last_brush::persist(&mut app, &ctx);
         crate::tool_memory::persist(&mut app, &ctx);
         tick(&mut app, &ctx);
         let saved = stored(&store);
@@ -3685,6 +3800,7 @@ mod tests {
         assert!(saved["toolBrushes"]["brushes"].get("Eraser").is_some() && saved["toolBrushes"]["brushes"].get("Brush").is_some());
 
         crate::menus::invoke(&mut app, &ctx, crate::tool_reset::RESET, json!({})).unwrap();
+        crate::last_brush::persist(&mut app, &ctx);
         crate::tool_memory::persist(&mut app, &ctx);
         tick(&mut app, &ctx);
         let saved = stored(&store);
@@ -3693,6 +3809,7 @@ mod tests {
         assert!(saved["toolBrushes"]["brushes"].get("Eraser").is_some());
 
         crate::menus::invoke(&mut app, &ctx, crate::tool_reset::RESET_ALL, json!({"confirmed": true})).unwrap();
+        crate::last_brush::persist(&mut app, &ctx);
         crate::tool_memory::persist(&mut app, &ctx);
         tick(&mut app, &ctx);
         let saved = stored(&store);

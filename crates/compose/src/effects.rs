@@ -997,7 +997,9 @@ pub fn hash_noise(x: i64, y: i64) -> f32 {
 }
 
 /// Effect noise (Photoshop's Noise slider): monochrome speckle in the coverage,
-/// applied after the contour. `amount` is 0..=1; 0 leaves the map untouched.
+/// applied after the contour. `amount` is 0..=1; 0 leaves the map untouched. The speckle is
+/// scaled by the coverage, so it fades out with the effect instead of lighting up the blur's
+/// near-zero tail out to the edge of its rectangular reach (#7833).
 fn noise(m: &mut Map, amount: f32, x0: i32, y0: i32) {
     if !amount.is_finite() || amount <= 0.0 {
         return;
@@ -1009,7 +1011,7 @@ fn noise(m: &mut Map, amount: f32, x0: i32, y0: i32) {
                 continue;
             }
             let n = hash_noise(i64::from(x0 + x as i32), i64::from(y0 + y as i32));
-            *v = (*v + (n - 0.5) * 2.0 * amount).clamp(0.0, 1.0);
+            *v = (*v * (1.0 + (n - 0.5) * 2.0 * amount)).clamp(0.0, 1.0);
         }
     }
 }
@@ -2521,6 +2523,7 @@ mod tests {
             altitude: 30.0,
             use_global_light: false,
             gloss_contour: Contour::Linear,
+            gloss_anti_alias: false,
             highlight: photocraft_doc::FxCommon::new(BlendMode::Screen, 0.75),
             highlight_color: photocraft_color::Color::WHITE,
             shadow: photocraft_doc::FxCommon::new(BlendMode::Multiply, 0.75),
@@ -3320,6 +3323,56 @@ mod tests {
         let noisy = glow_map(&square_shape(40), &g(0.6), false, (0, 0));
         let diff: f32 = plain.v.iter().zip(&noisy.v).map(|(a, b)| (a - b).abs()).sum();
         assert!(diff > 5.0, "glow noise changes the coverage: {diff}");
+    }
+
+    /// Issue #7833: the speckle stays inside the glow's visible falloff instead of filling the
+    /// blur's whole rectangular reach out to the map edge.
+    #[test]
+    fn effect_noise_stays_inside_the_visible_falloff() {
+        let mut shape = Map::new(80, 80, 0.0);
+        for y in 35..45 {
+            for x in 35..45 {
+                shape.v[y * 80 + x] = 1.0;
+            }
+        }
+        let g = |noise: f32| Glow {
+            common: photocraft_doc::FxCommon::new(BlendMode::Screen, 1.0),
+            paint: FxPaint::Color(photocraft_color::Color::WHITE),
+            technique: GlowTechnique::Softer,
+            spread: 0.0,
+            size: 10.0,
+            contour: Contour::Linear,
+            anti_alias: false,
+            range: 0.5,
+            jitter: 0.0,
+            noise,
+            source: GlowSource::Edge,
+        };
+        let s = |noise: f32| Shadow {
+            common: photocraft_doc::FxCommon::new(BlendMode::Multiply, 1.0),
+            color: photocraft_color::Color::BLACK,
+            angle: 0.0,
+            use_global_light: false,
+            distance: 0.0,
+            spread: 0.0,
+            size: 10.0,
+            contour: Contour::Linear,
+            anti_alias: false,
+            noise,
+            knocks_out: true,
+        };
+        let light = GlobalLight::default();
+        let pairs = [
+            ("glow", glow_map(&shape, &g(0.0), false, (0, 0)), glow_map(&shape, &g(0.5), false, (0, 0))),
+            ("shadow", shadow_map(&shape, &s(0.0), &light, false, (0, 0)), shadow_map(&shape, &s(0.5), &light, false, (0, 0))),
+        ];
+        for (name, plain, noisy) in pairs {
+            for (i, (p, n)) in plain.v.iter().zip(&noisy.v).enumerate() {
+                if *p < 1.0 / 255.0 {
+                    assert!(*n <= 2.0 / 255.0, "{name}: pixel ({}, {}) invisible without noise: {p} -> {n}", i % 80, i / 80);
+                }
+            }
+        }
     }
 
     #[test]

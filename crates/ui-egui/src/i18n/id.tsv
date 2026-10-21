@@ -2645,6 +2645,7 @@
 	32 bit (float)	32 bit (titik mengambang)
 	Floating point	Titik mengambang
 	Use Global Light	Gunakan Cahaya Global
+	Overprint	Cetak Tindih
 	Native file drag-and-drop is unavailable	Seret dan lepas berkas native tidak tersedia
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	Seret dan lepas berkas native belum didukung di Wayland. Gunakan Berkas › Buka, atau salin gambar di pengelola berkas lalu tempel dengan {paste}.
 	To drop files, start PhotoCraft under XWayland: `{command}`	Untuk menjatuhkan berkas, jalankan PhotoCraft di XWayland: `{command}`
@@ -3289,6 +3290,10 @@ curves	Smooth	Haluskan
 	DDS Options	Opsi DDS
 	Compression	Kompresi
 	Generate Mipmaps	Buat mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Tidak ada tabel warna untuk disimpan.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} warna disimpan ke {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptor GPU

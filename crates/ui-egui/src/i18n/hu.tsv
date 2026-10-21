@@ -1616,6 +1616,7 @@ fontWeight	Thin	Hajszálvékony
 	Overlay	Átfedés
 	Overlay Color	Átfedés színe
 	Overlay Opacity	Átfedés átlátszatlansága
+	Overprint	Felülnyomás
 	Paint over hair or fur on the image; Alt paints the other mode	Fesd át a hajat vagy a szőrzetet a képen; Alt lenyomásával a másik módban festesz
 	Pass Through	Áteresztés
 	Pattern Overlay	Mintázatfedés
@@ -4208,6 +4209,10 @@ cameraRaw	Yellow	Sárga
 # DDS Options (#1327)
 	DDS Options	DDS-beállítások
 	Generate Mipmaps	Mipmapek létrehozása
+
+# Color Table (.act) dialog
+	There is no color table to save.	Nincs menthető színtábla.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} szín mentve ide: {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU-adapter

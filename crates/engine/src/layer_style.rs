@@ -86,19 +86,19 @@ pub fn effect_defaults(kind: &str) -> Value {
             json!({"blend": "Multiply", "color": "#000000", "opacity": 75, "angle": 120, "useGlobalLight": true, "distance": 5, "choke": 0, "size": 5, "contour": "Linear", "antiAlias": false, "noise": 0})
         }
         "outerGlow" => {
-            json!({"blend": "Screen", "opacity": 75, "color": "#ffffbe", "spread": 0, "size": 5, "range": 50, "contour": "Linear", "antiAlias": false, "noise": 0})
+            json!({"blend": "Screen", "opacity": 75, "color": "#ffffbe", "technique": "softer", "spread": 0, "size": 5, "range": 50, "contour": "Linear", "antiAlias": false, "noise": 0})
         }
         "innerGlow" => {
-            json!({"blend": "Screen", "opacity": 75, "color": "#ffffbe", "source": "edge", "choke": 0, "size": 5, "contour": "Linear", "antiAlias": false, "noise": 0})
+            json!({"blend": "Screen", "opacity": 75, "color": "#ffffbe", "technique": "softer", "source": "edge", "choke": 0, "size": 5, "range": 50, "contour": "Linear", "antiAlias": false, "noise": 0})
         }
-        "stroke" => json!({"size": 1, "position": "inside", "blend": "Normal", "opacity": 100, "color": "#000000"}),
+        "stroke" => json!({"size": 1, "position": "inside", "blend": "Normal", "opacity": 100, "overprint": false, "color": "#000000"}),
         "colorOverlay" => json!({"blend": "Normal", "color": "#ff0000", "opacity": 100}),
         "gradientOverlay" => {
             json!({"blend": "Normal", "opacity": 100, "from": "#000000", "to": "#ffffff", "reverse": false, "style": "linear", "angle": 90, "scale": 100})
         }
         "patternOverlay" => json!({"blend": "Normal", "opacity": 100, "pattern": "", "angle": 0, "scale": 100, "link": true}),
         "bevelEmboss" => {
-            json!({"style": "inner", "technique": "smooth", "depth": 100, "direction": "up", "size": 5, "soften": 0, "angle": 120, "useGlobalLight": true, "altitude": 30, "glossContour": "Linear", "contour": false, "contourName": "Linear", "contourRange": 50, "contourAntiAlias": false})
+            json!({"style": "inner", "technique": "smooth", "depth": 100, "direction": "up", "size": 5, "soften": 0, "angle": 120, "useGlobalLight": true, "altitude": 30, "glossContour": "Linear", "glossAntiAlias": false, "contour": false, "contourName": "Linear", "contourRange": 50, "contourAntiAlias": false})
         }
         "satin" => {
             json!({"blend": "Multiply", "color": "#000000", "opacity": 50, "angle": 19, "distance": 11, "size": 14, "contour": "Linear", "antiAlias": true, "invert": true})
@@ -510,6 +510,7 @@ fn fresh_effect(kind: &str) -> Option<Effect> {
             size: 1.0,
             position: StrokePosition::Inside,
             paint: FxPaint::Color(Color::BLACK),
+            overprint: false,
         }),
         "colorOverlay" => Effect::ColorOverlay { common: FxCommon::new(BlendMode::Normal, 1.0), color: Color::rgb(1.0, 0.0, 0.0) },
         "gradientOverlay" => Effect::GradientOverlay { common: FxCommon::new(BlendMode::Normal, 1.0), gradient: Gradient::default(), dither: false },
@@ -544,6 +545,7 @@ fn fresh_effect(kind: &str) -> Option<Effect> {
             altitude: 30.0,
             use_global_light: true,
             gloss_contour: Contour::Linear,
+            gloss_anti_alias: false,
             highlight: FxCommon::new(BlendMode::Screen, 0.75),
             highlight_color: Color::WHITE,
             shadow: FxCommon::new(BlendMode::Multiply, 0.75),
@@ -693,6 +695,7 @@ pub fn overlay_effect(fx: &mut Effect, p: &Value) {
                     _ => StrokePosition::Outside,
                 };
             }
+            set_bool(p, "overprint", &mut s.overprint);
             if p.get("from").is_some() {
                 s.paint = FxPaint::Gradient(gradient(p));
             } else if let Some(c) = color_of(p, "color") {
@@ -792,6 +795,7 @@ pub fn overlay_effect(fx: &mut Effect, p: &Value) {
                 bv.use_global_light = x;
             }
             set_contour(p, "glossContour", &mut bv.gloss_contour);
+            set_bool(p, "glossAntiAlias", &mut bv.gloss_anti_alias);
             // The Contour element: `contour` turns it on/off; its curve, Range and
             // Anti-aliased edit the element in place, so an imported curve survives.
             match b_of(p, "contour") {
@@ -1002,17 +1006,17 @@ pub fn specs() -> Vec<CommandSpec> {
         style_cmd!(
             "outerGlow",
             "Outer Glow…",
-            r##"{"color":"#rrggbb","opacity":0..100=75,"blend":str="screen","technique":"softer|precise","spread":0..100,"size":px,"range":0..100,"contour":name|curve,"antiAlias":bool,"noise":0..100,"add":bool}"##
+            r##"{"color":"#rrggbb","opacity":0..100=75,"blend":str="screen","technique":"softer|precise","spread":0..100,"size":px,"range":1..100=50,"contour":name|curve,"antiAlias":bool,"noise":0..100,"add":bool}"##
         ),
         style_cmd!(
             "innerGlow",
             "Inner Glow…",
-            r##"{"color":"#rrggbb","opacity":0..100=75,"blend":str="screen","technique":"softer|precise","source":"edge|center","choke":0..100,"size":px,"contour":name|curve,"antiAlias":bool,"noise":0..100,"add":bool}"##
+            r##"{"color":"#rrggbb","opacity":0..100=75,"blend":str="screen","technique":"softer|precise","source":"edge|center","choke":0..100,"size":px,"range":1..100=50,"contour":name|curve,"antiAlias":bool,"noise":0..100,"add":bool}"##
         ),
         style_cmd!(
             "stroke",
             "Stroke…",
-            r##"{"size":px=1,"position":"inside|outside|center","color":"#rrggbb","from":"#rrggbb","to":"#rrggbb","method":"classic|perceptual|linear|smooth"?,"smoothness":0..100=100,"style":str,"angle":deg,"opacity":0..100,"blend":str,"add":bool}"##
+            r##"{"size":px=1,"position":"inside|outside|center","color":"#rrggbb","from":"#rrggbb","to":"#rrggbb","method":"classic|perceptual|linear|smooth"?,"smoothness":0..100=100,"style":str,"angle":deg,"opacity":0..100,"blend":str,"overprint":bool,"add":bool}"##
         ),
         style_cmd!("colorOverlay", "Color Overlay…", r##"{"color":"#rrggbb","opacity":0..100=100,"blend":str,"add":bool}"##),
         style_cmd!(
@@ -1028,7 +1032,7 @@ pub fn specs() -> Vec<CommandSpec> {
         style_cmd!(
             "bevelEmboss",
             "Bevel & Emboss…",
-            r##"{"style":"inner|outer|emboss|pillow|stroke","technique":"smooth|chiselHard|chiselSoft","contour":bool,"contourName":name|curve,"contourRange":1..100=50,"contourAntiAlias":bool,"glossContour":name|curve,"texture":pattern id|name?,"textureScale":1..1000=100,"textureDepth":-1000..1000=100,"textureInvert":bool,"textureLink":bool=true,"depth":1..1000=100,"direction":"up|down","size":px=5,"soften":px,"angle":deg,"altitude":deg,"add":bool}"##
+            r##"{"style":"inner|outer|emboss|pillow|stroke","technique":"smooth|chiselHard|chiselSoft","contour":bool,"contourName":name|curve,"contourRange":1..100=50,"contourAntiAlias":bool,"glossContour":name|curve,"glossAntiAlias":bool,"texture":pattern id|name?,"textureScale":1..1000=100,"textureDepth":-1000..1000=100,"textureInvert":bool,"textureLink":bool=true,"depth":1..1000=100,"direction":"up|down","size":px=5,"soften":px,"angle":deg,"altitude":deg,"add":bool}"##
         ),
         style_cmd!(
             "satin",
@@ -1142,6 +1146,48 @@ mod tests {
         assert!((b.contour.as_ref().unwrap().range - 0.7).abs() < 1e-6);
         let t = b.texture.as_ref().unwrap();
         assert_eq!((t.name.as_str(), t.depth, t.invert), ("Bubbles", -2.0, true));
+    }
+
+    /// #6698 review: a glow's Range runs 1..100 %, as its slider and Photoshop's do. A 0 is
+    /// held at the 1 % floor, and 100 is kept.
+    #[test]
+    fn glow_range_is_held_to_one_through_one_hundred() {
+        for kind in ["outerGlow", "innerGlow"] {
+            for (sent, kept) in [(0.0, 0.01), (-5.0, 0.01), (1.0, 0.01), (50.0, 0.5), (100.0, 1.0), (250.0, 1.0)] {
+                let mut s = session();
+                s.execute(&format!("layer.layerStyle.{kind}"), json!({"range": sent})).unwrap();
+                let range = match &effects(&s)[0] {
+                    Effect::OuterGlow(g) | Effect::InnerGlow(g) => g.range,
+                    other => panic!("{other:?}"),
+                };
+                assert!((range - kept).abs() < 1e-6, "{kind} range {sent} kept as {range}, not {kept}");
+            }
+        }
+        let doc = |id: &str| specs().into_iter().find(|c| c.id == id).map(|c| c.params).unwrap_or_default();
+        assert!(doc("layer.layerStyle.outerGlow").contains(r#""range":1..100=50"#));
+        assert!(doc("layer.layerStyle.innerGlow").contains(r#""range":1..100=50"#));
+    }
+
+    #[test]
+    fn bevel_gloss_anti_alias_is_a_param() {
+        let mut s = session();
+        s.execute("layer.layerStyle.bevelEmboss", json!({"glossContour": "Ring - Double", "glossAntiAlias": true})).unwrap();
+        let Effect::BevelEmboss(b) = &effects(&s)[0] else { panic!() };
+        assert!(b.gloss_anti_alias);
+        s.execute("layer.layerStyle.bevelEmboss", json!({"glossAntiAlias": false})).unwrap();
+        let Effect::BevelEmboss(b) = &effects(&s)[0] else { panic!() };
+        assert!(!b.gloss_anti_alias);
+    }
+
+    #[test]
+    fn stroke_overprint_is_a_param() {
+        let mut s = session();
+        s.execute("layer.layerStyle.stroke", json!({"size": 4, "overprint": true})).unwrap();
+        let Effect::Stroke(st) = &effects(&s)[0] else { panic!() };
+        assert!(st.overprint);
+        s.execute("layer.layerStyle.stroke", json!({"overprint": false})).unwrap();
+        let Effect::Stroke(st) = &effects(&s)[0] else { panic!() };
+        assert!(!st.overprint);
     }
 
     #[test]
@@ -1356,6 +1402,7 @@ mod tests {
             size: 7.0,
             position: StrokePosition::Outside,
             paint: FxPaint::Gradient(Gradient { stops: vec![(0.0, Color::rgb(0.0, 0.0, 1.0)), (1.0, Color::WHITE)], ..Gradient::default() }),
+            overprint: false,
         });
         let r = s
             .execute(
@@ -1392,6 +1439,7 @@ mod tests {
             size: 3.0,
             position: StrokePosition::Outside,
             paint: FxPaint::Color(Color::BLACK),
+            overprint: false,
         });
         for p in [
             json!({}),

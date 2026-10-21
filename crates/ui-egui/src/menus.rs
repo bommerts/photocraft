@@ -587,6 +587,12 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
         }
         "window.togglePanels" => {
             // Tab hides the Tools panel, the options bar and the dock; Tab again shows what it hid.
+            if app.ui.view.hides_chrome() {
+                // Full Screen Mode: Tab only shows or hides the chrome for now (#6760); the panels'
+                // own state, `hidden_by_tab` included, stays as it was before entering.
+                app.ui.panels.full_screen_chrome = !app.ui.panels.full_screen_chrome;
+                return Ok(Value::Null);
+            }
             let p = &mut app.ui.panels;
             match p.hidden_by_tab.take() {
                 Some([toolbar, options, dock]) if !(p.toolbar || p.options_bar || p.dock) => {

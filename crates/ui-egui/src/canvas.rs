@@ -3297,21 +3297,32 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             let t = crate::theme::Tokens::get(&ctx);
             let pasteboard = crate::prefs_ui::pasteboard_color(app);
             let dot_tex = dots(&ctx, &t);
-            for r in crate::artboard_ui::pasteboard_rects(&xf, &doc) {
-                let r = r.intersect(rect);
-                if !r.is_positive() {
+            // Cut around the layers as they are shown, so a loose layer dragged with the Move tool
+            // (or otherwise previewed) is not covered where it now draws.
+            let shown = display_doc(app, idx).0;
+            // Each piece is painted as its own quad (the painter clips to the canvas), so a
+            // rotated view does not paint a piece's bounding box over the boards or loose work.
+            let fill = |q: &[Pos2; 4], tex: Option<egui::TextureId>, color: Color32| {
+                let mut mesh = tex.map_or_else(egui::Mesh::default, egui::Mesh::with_texture);
+                for &p in q {
+                    // Same phase as the dots around the document.
+                    let uv = if tex.is_some() { ((p - rect.min) / 22.0).to_pos2() } else { egui::epaint::WHITE_UV };
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p, uv, color });
+                }
+                mesh.add_triangle(0, 1, 2);
+                mesh.add_triangle(0, 2, 3);
+                painter.add(mesh);
+            };
+            for q in crate::artboard_ui::pasteboard_quads(&xf, &shown) {
+                if !Rect::from_points(&q).intersects(rect) {
                     continue;
                 }
                 match pasteboard {
-                    Some(c) => {
-                        painter.rect_filled(r, 0.0, c);
-                    }
+                    Some(c) => fill(&q, None, c),
                     None => {
-                        painter.rect_filled(r, 0.0, t.canvas);
+                        fill(&q, None, t.canvas);
                         if let Some(id) = dot_tex {
-                            // Same phase as the dots around the document.
-                            let uv = Rect::from_min_max(((r.min - rect.min) / 22.0).to_pos2(), ((r.max - rect.min) / 22.0).to_pos2());
-                            painter.image(id, r, uv, Color32::WHITE);
+                            fill(&q, Some(id), Color32::WHITE);
                         }
                     }
                 }
@@ -3788,7 +3799,9 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
         // it owns the press: no scrub, and its release is no click step.
         if tool == Tool::Zoom && !transform_owns_pointer {
             let out = zoom_out(ui.input(|i| i.modifiers.alt));
-            if crate::zoom_hold::update(&ctx, &mut view, &xf, app.session.prefs().general.animated_zoom, out, ppp) {
+            let on_canvas = !under_dialog && !over_compass && response.is_pointer_button_down_on();
+            let hold = crate::zoom_hold::hold_id(idx, primary, ctx.viewport_id());
+            if crate::zoom_hold::update(&ctx, &mut view, &xf, app.session.prefs().general.animated_zoom, out, ppp, on_canvas, hold) {
                 (buttons.started, buttons.dragged, buttons.stopped, buttons.clicked) = (false, false, false, false);
             }
         }
@@ -4031,7 +4044,11 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
     }
     let xf = if crop_camera { ViewXform { center: view.center, rotation: view.rotation, ..xf } } else { xf };
     let (img_rect, beyond, layer_edges) = painted.unwrap_or_else(|| paint_canvas(app, ui, &view, xf));
-    if primary && !(hand_pan && response.dragged()) {
+    // A Hand drag (the tool, Space or the middle button) keeps every overlay on screen, as in
+    // Photoshop: the Pen path being drawn, paths, guides, grid, transform box (#6592). Only the
+    // tool cursors below give way to the fist.
+    let panning = hand_pan && response.dragged();
+    if primary {
         // The transform preview is image content: it goes under the grid and guides, which
         // stay visible across a layer being transformed (#5086); the box is drawn later.
         crate::transform_tool::draw_content(app, &painter, &xf);
@@ -4095,7 +4112,9 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             }
             command_guide_at(app, tool, d, crate::workspace_ui::sticky_mods(app, ui.input(|i| i.modifiers)))
         });
-        if let Some((vertical, _)) = guide_hover {
+        if panning {
+            // The fist set with the pan above stays (#2196).
+        } else if let Some((vertical, _)) = guide_hover {
             ui.ctx().set_cursor_icon(crate::rulers::guide_cursor(&xf, vertical));
         } else if let Some(p) = response.hover_pos()
             && let Some(c) = crate::transform_tool::cursor(app, &xf, xf.to_doc(p), ui.input(|i| i.modifiers.alt || i.modifiers.command))
@@ -4329,12 +4348,6 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             // ⇧ after a stroke: the straight line a click would paint (#257).
             crate::stroke_constraint::draw_line_preview(app, &painter, &xf, p, tool, held.shift);
         }
-    }
-    if primary && hand_pan && response.dragged() {
-        crate::transform_tool::draw_content(app, &painter, &xf);
-        crate::transform_tool::draw_overlay(app, &painter, &xf);
-        // The Pen's path in progress survives a Space pan, and stays on screen through it (#6592).
-        crate::vector_ui::draw_overlay(app, &painter, &xf, &doc);
     }
     app.tool_override = None;
     if let Some(b) = layer_edges_rect(app, idx) {
@@ -5107,6 +5120,11 @@ fn draw_drag_preview(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &View
         app.trail = None;
         return;
     };
+    // The Move tool's ΔX/ΔY beside the pointer, for layers and selected pixels alike (#5727).
+    if let Some(values) = crate::move_ui::offset_readout(app) {
+        let at = d.points.last().map_or(d.start, |p| [p[0], p[1]]);
+        draw_value_readout(app, painter.ctx(), "move-readout", xf.to_screen(at[0] as f32, at[1] as f32), ["ΔX:", "ΔY:"], values);
+    }
     // Dragging the selection: its own ants follow the pointer (`selection_shown_offset`).
     if d.sel_move.is_some() {
         return;

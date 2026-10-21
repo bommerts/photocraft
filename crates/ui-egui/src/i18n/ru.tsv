@@ -247,6 +247,7 @@
 	Inner Glow…	Внутреннее свечение…
 	Bevel & Emboss…	Тиснение…
 	Use Global Light	Использовать глобальный свет
+	Overprint	Наложение
 	Satin…	Глянец…
 	Color Overlay…	Наложение цвета…
 	Gradient Overlay…	Наложение градиента…
@@ -3269,6 +3270,10 @@ curves	Smooth	Сгладить
 	DDS Options	Параметры DDS
 	Compression	Сжатие
 	Generate Mipmaps	Создать MIP-карты
+
+# Color Table (.act) dialog
+	There is no color table to save.	Нет таблицы цветов для сохранения.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Сохранён {n} цвет в {file}|Сохранены {n} цвета в {file}|Сохранено {n} цветов в {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Адаптер GPU

@@ -328,6 +328,7 @@
 	Blending Options…	レイヤー効果…
 	Bevel & Emboss…	ベベルとエンボス…
 	Use Global Light	グローバルライトを使用
+	Overprint	オーバープリント
 	Inner Shadow…	シャドウ (内側)…
 	Inner Glow…	光彩 (内側)…
 	Satin…	サテン…
@@ -3969,6 +3970,10 @@ curves	Smooth	スムーズ
 	DDS Options	DDS オプション
 	Compression	圧縮
 	Generate Mipmaps	ミップマップを生成
+
+# Color Table (.act) dialog
+	There is no color table to save.	保存するカラーテーブルがありません。
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{file} に {n} 色を保存しました
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU アダプター

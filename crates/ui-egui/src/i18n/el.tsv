@@ -1819,6 +1819,7 @@
 	Blending Options…	Επιλογές ανάμειξης…
 	Bevel & Emboss…	Λοξότμηση και ανάγλυφο…
 	Use Global Light	Χρήση καθολικού φωτισμού
+	Overprint	Υπερεκτύπωση
 	Inner Shadow…	Εσωτερική σκιά…
 	Inner Glow…	Εσωτερική λάμψη…
 	Satin…	Σατινέ…
@@ -3991,6 +3992,10 @@ curves	Smooth	Εξομάλυνση
 # DDS Options (#1327)
 	DDS Options	Επιλογές DDS
 	Generate Mipmaps	Δημιουργία mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Δεν υπάρχει πίνακας χρωμάτων για αποθήκευση.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Αποθηκεύτηκε {n} χρώμα στο {file}|Αποθηκεύτηκαν {n} χρώματα στο {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Προσαρμογέας GPU

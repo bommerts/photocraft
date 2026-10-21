@@ -227,6 +227,56 @@ fn cutting_an_untouched_part_of_the_mask_moves_it_and_leaves_the_background_colo
     assert_eq!(mask_at(&s, 40, 12), 0.0);
 }
 
+/// #7655: a selection loaded from the layer's own transparency lifts its half-transparent pixels
+/// whole, leaving nothing behind (Photoshop); a half selection of an opaque pixel still splits it.
+#[test]
+fn a_layers_own_transparency_floats_its_soft_pixels_whole() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 80, "height": 60, "background": "transparent"})).unwrap();
+    let id = s.active().unwrap().active_layer.unwrap();
+    s.edit("paint", |doc, _| {
+        let surf = doc.layer_mut(id).unwrap().surface_mut().unwrap();
+        surf.fill_rect(Rect::new(10, 10, 20, 30), &[1.0, 0.0, 0.0, 0.5]);
+        surf.fill_rect(Rect::new(20, 10, 30, 30), &[1.0, 0.0, 0.0, 1.0]);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("select.loadSelection", json!({"channel": "transparency"})).unwrap();
+    s.execute("select.float", json!({"dx": 0, "dy": 25})).unwrap();
+    s.execute("select.drop", json!({})).unwrap();
+    let d = &s.active().unwrap().doc;
+    assert_eq!(alpha(d, id, 15, 20), 0.0, "no ghost where the soft pixels were");
+    assert!((alpha(d, id, 15, 45) - 0.5).abs() < 0.01, "they moved whole: {}", alpha(d, id, 15, 45));
+    assert_eq!((alpha(d, id, 25, 20), alpha(d, id, 25, 45)), (0.0, 1.0));
+
+    // A copy (⌥) of them is as solid as they are, as Photoshop's Layer via Copy of the same
+    // selection is, and leaves them where they were.
+    s.undo();
+    s.execute("select.loadSelection", json!({"channel": "transparency"})).unwrap();
+    s.execute("select.float", json!({"dx": 0, "dy": 25, "copy": true})).unwrap();
+    s.execute("select.drop", json!({})).unwrap();
+    let d = &s.active().unwrap().doc;
+    assert!((alpha(d, id, 15, 20) - 0.5).abs() < 0.01 && (alpha(d, id, 15, 45) - 0.5).abs() < 0.01, "{} {}", alpha(d, id, 15, 20), alpha(d, id, 15, 45));
+
+    // A half selection of an opaque pixel splits it half and half, as before.
+    let (mut s, id) = session();
+    s.execute("select.all", json!({})).unwrap();
+    s.edit("half", |doc, _| {
+        let sel = doc.selection.as_mut().unwrap();
+        sel.fill_rect(doc_rect(80, 60), &[0.5]);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("select.float", json!({"dx": 40, "dy": 0})).unwrap();
+    s.execute("select.drop", json!({})).unwrap();
+    let d = &s.active().unwrap().doc;
+    assert!((alpha(d, id, 15, 15) - 0.5).abs() < 0.01 && (alpha(d, id, 55, 15) - 0.5).abs() < 0.01);
+}
+
+fn doc_rect(w: i32, h: i32) -> Rect {
+    Rect::new(0, 0, w, h)
+}
+
 #[test]
 fn float_shares_interior_tiles_on_cut_and_place() {
     let mut s = Session::new();

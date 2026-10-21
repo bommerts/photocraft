@@ -334,6 +334,7 @@
 	Blending Options…	Možnosti prolnutí…
 	Bevel & Emboss…	Úkos a reliéf…
 	Use Global Light	Použít globální světlo
+	Overprint	Přetisk
 	Inner Shadow…	Vnitřní stín…
 	Inner Glow…	Vnitřní záře…
 	Satin…	Satén…
@@ -3902,6 +3903,10 @@ navigator	Zoom	Zvětšení
 # DDS Options (#1327)
 	DDS Options	Možnosti DDS
 	Generate Mipmaps	Generovat mipmapy
+
+# Color Table (.act) dialog
+	There is no color table to save.	Neexistuje žádná tabulka barev k uložení.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Uložena {n} barva do {file}|Uloženy {n} barvy do {file}|Uloženo {n} barev do {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptér GPU

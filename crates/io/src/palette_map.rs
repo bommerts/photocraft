@@ -35,7 +35,7 @@ pub(crate) fn document_to_psd(doc: &Document, force_psb: bool) -> Option<(PsdFil
         _ => return None,
     };
     let mut warnings = Vec::new();
-    if doc.layers.len() > 1 {
+    if !flattens_losslessly(doc) {
         warnings.push(format!("{:?} documents have no layers in Photoshop: written flattened", doc.mode));
     }
     let big = doc.size.width > 30_000 || doc.size.height > 30_000;
@@ -67,6 +67,28 @@ pub(crate) fn document_to_psd(doc: &Document, force_psb: bool) -> Option<(PsdFil
     let keep = |id: u16, _: &[u8]| !CHANNEL_RESOURCES.contains(&id) && id != TRANSPARENCY_INDEX && id != COLOR_TABLE_COUNT;
     let file = crate::multichannel_map::layerless_file(doc, header, image_data, color_mode_data, resources, keep, &mut warnings);
     Some((file, warnings))
+}
+
+/// Whether the merged image holds everything the layers do: no layer, or a single visible pixel
+/// layer at full opacity, Normal blend, unclipped, without masks or layer effects. Anything else
+/// (more layers, a type, shape or smart object layer, a mask, a hidden layer) is lost when the
+/// document is written flattened.
+fn flattens_losslessly(doc: &Document) -> bool {
+    match doc.layers.as_slice() {
+        [] => true,
+        [l] => {
+            l.visible
+                && matches!(l.content, photocraft_doc::LayerContent::Raster(_))
+                && l.mask.is_none()
+                && l.vector_mask.is_none()
+                && !l.clipped
+                && l.opacity >= 1.0
+                && l.fill_opacity >= 1.0
+                && l.blend == photocraft_color::BlendMode::Normal
+                && !(l.effects.enabled && l.effects.items.iter().any(photocraft_doc::Effect::enabled))
+        }
+        _ => false,
+    }
 }
 
 /// The Color Table as Color Mode Data: 256 reds, 256 greens, 256 blues (unused entries black).

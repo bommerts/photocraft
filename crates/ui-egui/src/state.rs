@@ -472,6 +472,10 @@ pub struct Panels {
     /// What Tab hid (toolbar, options bar, dock), so a second Tab brings back just those.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_by_tab: Option<[bool; 3]>,
+    /// Tab in Full Screen Mode shows the menu bar, toolbar, options bar and dock over the canvas
+    /// (#6760). Only a view of the moment: not saved, and the panels' own flags stay untouched.
+    #[serde(skip)]
+    pub full_screen_chrome: bool,
     /// The right dock's icon rail. An app that embeds PhotoCraft's UI can hide it for a simpler view.
     #[serde(default = "yes")]
     pub rail: bool,
@@ -503,6 +507,7 @@ impl Default for Panels {
             toolbar_double: false,
             dock: true,
             hidden_by_tab: None,
+            full_screen_chrome: false,
             rail: true,
             menu_bar: true,
             gradient_editor: false,
@@ -673,6 +678,10 @@ pub struct ToolOptions {
     pub marquee_width: f32,
     #[serde(default = "one")]
     pub marquee_height: f32,
+    /// The unit Fixed Size's Width and Height show (a [`photocraft_engine::prefs::Unit`] name,
+    /// picked by right-clicking them); the size itself stays in pixels (#7910).
+    #[serde(default = "default_marquee_unit")]
+    pub marquee_unit: String,
     /// Move tool: Auto-Select (with "layer" or "group" target) and Show Transform Controls.
     /// Auto-Select is on with the "group" target by default, as in current Photoshop;
     /// ⌘/Ctrl-click inverts it.
@@ -806,6 +815,10 @@ fn default_marquee_style() -> String {
     "normal".into()
 }
 
+fn default_marquee_unit() -> String {
+    "pixels".into()
+}
+
 fn one() -> f32 {
     1.0
 }
@@ -937,6 +950,7 @@ impl Default for ToolOptions {
             marquee_style: default_marquee_style(),
             marquee_width: 1.0,
             marquee_height: 1.0,
+            marquee_unit: default_marquee_unit(),
             move_auto_select: true,
             move_target: default_move_target(),
             move_show_transform: false,
@@ -1088,6 +1102,10 @@ pub enum MadeLayer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub layer: u64,
+    /// Id of the document being edited (layer ids can repeat across documents, e.g. one .pcraft
+    /// opened twice). `None`: the active document.
+    #[serde(default)]
+    pub document: Option<u64>,
     pub caret: usize,
     pub anchor: usize,
     /// History coalescing key: the whole editing session is one "Edit Type Layer" step.
@@ -1165,6 +1183,15 @@ pub struct DockTabs {
     pub brushes: usize,
 }
 
+/// Sliders under the Color panel's field: hue/saturation/brightness or red/green/blue (#7172).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ColorPanelSliderMode {
+    #[default]
+    Hsb,
+    Rgb,
+}
+
 /// Color panel state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1174,6 +1201,9 @@ pub struct ColorPanelState {
     /// Color Picker › Only Web Colors, kept across opens like Photoshop (#4995).
     #[serde(default)]
     pub web_only: bool,
+    /// HSB or RGB sliders under the colour field (#7172).
+    #[serde(default)]
+    pub slider_mode: ColorPanelSliderMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

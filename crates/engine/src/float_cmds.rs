@@ -72,7 +72,7 @@ impl CutParts {
                     rest.prune();
                 }
             } else if !copy && !mask {
-                crate::pixels::try_clear_surface(&mut rest, b, Some(sel))?;
+                crate::pixels::try_lift_coverage(&mut rest, b, sel)?;
             }
         }
         let piece_bounds = piece.content_bounds();
@@ -178,7 +178,10 @@ fn cut_piece(base: &Surface, sel: &Surface, b: photocraft_geom::Rect, with_alpha
                         for (c, v) in px.iter_mut().enumerate().take(n) {
                             *v = read_sample(src_px, src_fmt.sample, c);
                         }
-                        px[a] *= k;
+                        // The selection lifts its share of a pixel's coverage, up to all of it
+                        // (Photoshop): a layer's own transparency, loaded as the selection, lifts
+                        // it whole (#7655). An opaque pixel splits as k and 1 − k.
+                        px[a] = px[a].min(k);
                     } else {
                         for (c, v) in px.iter_mut().enumerate().take(a) {
                             *v = read_sample(src_px, src_fmt.sample, c);

@@ -524,6 +524,7 @@ fn type_tool_alt_arrows_kern_the_pair() {
     let metric = photocraft_text::shared().lock().unwrap().pair_kerning(&text(&h), 72.0, 0).unwrap().round();
     h.state_mut().ui.text_edit = Some(crate::state::TextEdit {
         layer: id,
+        document: None,
         caret: 1,
         anchor: 1,
         session: "kern-test".into(),
@@ -574,6 +575,7 @@ fn type_tool_alt_arrows_kern_the_pair() {
 fn edit_type(h: &mut Harness<'static, PhotocraftApp>, layer: u64, anchor: usize, caret: usize) {
     h.state_mut().ui.text_edit = Some(crate::state::TextEdit {
         layer,
+        document: None,
         caret,
         anchor,
         session: "format-keys".into(),
@@ -792,6 +794,7 @@ fn type_tool_format_keys_survive_hostile_state() {
     for ed in [None, Some(1)] {
         app.ui.text_edit = ed.map(|layer| crate::state::TextEdit {
             layer,
+            document: None,
             caret: 4,
             anchor: 0,
             session: "x".into(),

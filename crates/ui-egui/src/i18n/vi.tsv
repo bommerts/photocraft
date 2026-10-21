@@ -1909,6 +1909,7 @@ document	Orientation	Hướng trang
 	Preview	Xem trước
 	Blend Mode	Chế độ hòa trộn
 	Use Global Light	Dùng ánh sáng chung
+	Overprint	In chồng
 	Distance	Khoảng cách
 	Spread	Lan rộng
 	Choke	Thu hẹp
@@ -3782,6 +3783,10 @@ curves	Smooth	Làm mượt
 	DDS Options	Tùy chọn DDS
 	Compression	Nén
 	Generate Mipmaps	Tạo mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Không có bảng màu nào để lưu.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Đã lưu {n} màu vào {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Bộ điều hợp GPU

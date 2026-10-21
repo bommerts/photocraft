@@ -2656,6 +2656,7 @@
 	32 bit (float)	32 bits (flottant)
 	Floating point	Virgule flottante
 	Use Global Light	Utiliser la lumière globale
+	Overprint	Surimpression
 	Native file drag-and-drop is unavailable	Le glisser-déposer natif de fichiers n'est pas disponible
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	Le glisser-déposer natif de fichiers n'est pas encore pris en charge sous Wayland. Utilisez Fichier › Ouvrir, ou copiez l'image dans votre gestionnaire de fichiers et collez-la avec {paste}.
 	To drop files, start PhotoCraft under XWayland: `{command}`	Pour déposer des fichiers, lancez PhotoCraft sous XWayland : `{command}`
@@ -3302,6 +3303,10 @@ curves	Smooth	Lisser
 	DDS Options	Options DDS
 	Compression	Compression
 	Generate Mipmaps	Générer les mipmaps
+
+# Color Table (.act) dialog
+	There is no color table to save.	Il n’y a aucune table de couleurs à enregistrer.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} couleur enregistrée dans {file}|{n} couleurs enregistrées dans {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptateur GPU

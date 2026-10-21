@@ -212,6 +212,10 @@ struct Running {
     label: String,
     params: Value,
     journal: bool,
+    /// The recording (`ActionState::take`) running when the job started, if any (set by
+    /// `dispatch`, once recording resumes). Only that recording gets the job's step: one started
+    /// later must not pick up an edit made before it.
+    recorded_by: Option<u64>,
     doc: Option<DocId>,
     /// The document as the job saw it: applying fails if it was edited meanwhile.
     snapshot: Option<Weak<Document>>,
@@ -400,6 +404,7 @@ pub fn run<T: Send + 'static>(
         label: label.to_string(),
         params: Value::Null,
         journal: true,
+        recorded_by: None,
         doc,
         snapshot,
         ctx,
@@ -532,6 +537,15 @@ impl Session {
                     })?;
                 ctx.progress(0.95, "Preparing layers");
                 warm_layer_bounds(&imported.document, || ctx.check())?;
+                // Type layers need the shared text engine, whose first use waits for the
+                // installed-font scan started at launch (minutes on some machines). Wait here,
+                // so the shell's missing-font check after the open finds it ready instead of
+                // freezing the window (#7332).
+                if crate::type_extra_cmds::has_type_layers(&imported.document) {
+                    ctx.progress(0.97, "Loading fonts");
+                    let _ = photocraft_text::shared();
+                    ctx.check()?;
+                }
                 Ok(imported)
             },
             move |s, mut r: photocraft_io::ImportResult| {
@@ -800,6 +814,7 @@ impl Session {
                 job.command = id.to_string();
                 job.params = params;
                 job.journal = spec.journal;
+                job.recorded_by = self.actions.recording.map(|_| self.actions.take);
                 let jid = job.id;
                 self.jobs.running.push(job);
                 Ok(Started::Job(jid))
@@ -899,7 +914,13 @@ impl Session {
     }
 
     fn apply_job(&mut self, job: &Running, apply: Option<Apply>, payload: Payload) -> Result<Value> {
-        let Running { label, doc, snapshot, coalesce, color_restrict, layers, command, params, journal, .. } = job;
+        let Running { label, doc, snapshot, coalesce, color_restrict, layers, command, params, journal, recorded_by, .. } = job;
+        // A recording started after the job (#7289) keeps what it has so far, and the job's step
+        // goes into the journal past its start, so that recording doesn't get it.
+        let foreign = self.actions.recording.is_some() && *recorded_by != Some(self.actions.take);
+        if foreign {
+            crate::actions_cmds::flush_recording(self)?;
+        }
         let prev_active = self.active;
         let target = match doc {
             Some(d) => {
@@ -948,6 +969,9 @@ impl Session {
         // to that document instead, when the user switched tabs mid-job.
         if r.is_ok() {
             self.after_command(command, params.clone(), *journal, Some(nested_from));
+            if foreign && let Some((start, _)) = self.actions.recording.as_mut() {
+                *start = self.journal.len();
+            }
         }
         // Give the user back the layers they selected while the job ran, unless the job chose a
         // selection itself (a new layer, say) or one of their layers is gone.

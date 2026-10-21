@@ -330,6 +330,7 @@
 	Blending Options…	Opciones de fusión…
 	Bevel & Emboss…	Bisel y relieve…
 	Use Global Light	Usar luz global
+	Overprint	Sobreimprimir
 	Inner Shadow…	Sombra interior…
 	Inner Glow…	Resplandor interior…
 	Satin…	Satinado…
@@ -4253,6 +4254,10 @@ navigator	Zoom	Zoom
 # DDS Options (#1327)
 	DDS Options	Opciones de DDS
 	Generate Mipmaps	Generar mipmaps
+
+# Color Table (.act) dialog
+	There is no color table to save.	No hay ninguna tabla de colores para guardar.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Se guardó {n} color en {file}|Se guardaron {n} colores en {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptador de GPU

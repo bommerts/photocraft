@@ -6,7 +6,7 @@
 //! changing it never adds a history step. Every structural change below is one history step.
 
 use photocraft_color::PixelFormat;
-use photocraft_doc::{Document, Layer, LayerContent, LayerId};
+use photocraft_doc::{Document, Layer, LayerContent, LayerId, VideoData};
 use photocraft_geom::Rect;
 use serde_json::{Value, json};
 
@@ -740,21 +740,107 @@ fn doc_pixels_equal(a: &Document, b: &Document) -> bool {
 /// [`step_damage`] but without computing any bounds. Cheap: pixels compare by tile pointer.
 /// Conservative (`false`) past a nesting depth no real document reaches.
 pub fn same_pixels(a: &Document, b: &Document) -> bool {
-    fn walk(xs: &[Layer], ys: &[Layer], depth: usize) -> bool {
+    pixels_equal_with(a, b, |_, _| false)
+}
+
+/// [`same_pixels`], with video layers equal when `video_equal` says their frame stacks are.
+fn pixels_equal_with(a: &Document, b: &Document, video_equal: fn(&VideoData, &VideoData) -> bool) -> bool {
+    fn walk(xs: &[Layer], ys: &[Layer], depth: usize, video_equal: fn(&VideoData, &VideoData) -> bool) -> bool {
         depth < 256
             && xs.len() == ys.len()
             && xs.iter().zip(ys).all(|(x, y)| {
-                x.video.is_none()
-                    && y.video.is_none()
-                    && layer_pixels_equal(x, y)
+                layer_pixels_equal(x, y)
+                    && match (&x.video, &y.video) {
+                        (None, None) => true,
+                        (Some(vx), Some(vy)) => video_equal(vx, vy),
+                        _ => false,
+                    }
                     && match (x.children(), y.children()) {
-                        (Some(xc), Some(yc)) => walk(xc, yc, depth + 1),
+                        (Some(xc), Some(yc)) => walk(xc, yc, depth + 1, video_equal),
                         (None, None) => true,
                         _ => false,
                     }
             })
     }
-    doc_pixels_equal(a, b) && walk(&a.layers, &b.layers, 0)
+    doc_pixels_equal(a, b) && walk(&a.layers, &b.layers, 0, video_equal)
+}
+
+/// Whether two video layers hold the same frames: the same settings and stack shape
+/// (`VideoData`'s own, shallow equality) and the same tile pointers in every frame, painted and
+/// original. Pointer compares only, like [`surfaces_equal`].
+fn video_frames_equal(a: &VideoData, b: &VideoData) -> bool {
+    let frames = |x: &[photocraft_raster::Surface], y: &[photocraft_raster::Surface]| x.len() == y.len() && x.iter().zip(y).all(|(f, g)| surfaces_equal(f, g));
+    *a == *b
+        && frames(&a.frames, &b.frames)
+        && match (&a.original_frames, &b.original_frames) {
+            (Some(x), Some(y)) => frames(x, y),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+/// Whether `a` and `b` differ at most in their selection (#6865): a selection step, which must
+/// not mark a clean document modified. Pixels compare by tile pointer (as in [`same_pixels`],
+/// plus every frame of a video layer, whose own equality is shallow); every other field compares
+/// structurally, where copy-on-write `Arc`s of `Eq` data short-circuit on pointer identity. The
+/// destructure is exhaustive, so a new `Document` field fails to compile until it is classified.
+pub fn selection_only_change(a: &Document, b: &Document) -> bool {
+    let Document {
+        id,
+        name,
+        size: _,
+        resolution_dpi: _,
+        mode: _,
+        depth: _,
+        icc_profile: _,
+        layers,
+        channels: _,
+        guides,
+        ruler_origin,
+        selection: _,
+        metadata,
+        global_light: _,
+        paths,
+        work_path,
+        clipping_path,
+        quick_mask: _,
+        quick_mask_unselected,
+        patterns: _,
+        color_table: _,
+        duotone: _,
+        layer_comps,
+        last_applied_comp,
+        last_document_state,
+        measurement,
+        notes,
+        text_styles,
+        slices,
+        variables,
+        timeline,
+        file_encoding,
+    } = a;
+    // The ignored fields above are the pixel ones `pixels_equal_with` already compares.
+    pixels_equal_with(a, b, video_frames_equal)
+        && *id == b.id
+        && *name == b.name
+        && *layers == b.layers
+        && *guides == b.guides
+        && *ruler_origin == b.ruler_origin
+        && *metadata == b.metadata
+        && *paths == b.paths
+        && *work_path == b.work_path
+        && *clipping_path == b.clipping_path
+        && *quick_mask_unselected == b.quick_mask_unselected
+        && *layer_comps == b.layer_comps
+        && *last_applied_comp == b.last_applied_comp
+        && *last_document_state == b.last_document_state
+        && *measurement == b.measurement
+        && *notes == b.notes
+        && *text_styles == b.text_styles
+        && *slices == b.slices
+        && *variables == b.variables
+        && *timeline == b.timeline
+        && *file_encoding == b.file_encoding
 }
 
 /// Pixels a single history step can have changed between `a` and `b` (the documents on either
@@ -1336,7 +1422,8 @@ pub(crate) fn check_group_depth(doc: &Document, what: &str) -> Result<()> {
 }
 
 /// Group Layers (⌘G) / Group from Layers: the explicit layer, or every selected layer, moves
-/// into a new group placed where the top-most of them was. Bottom-to-top order is preserved.
+/// into a new, collapsed group placed where the top-most of them was. Bottom-to-top order is
+/// preserved.
 pub fn group_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = match crate::commands::explicit_layer(s, p)? {
         Some(id) => vec![id],
@@ -1350,7 +1437,12 @@ pub fn group_layers(s: &mut Session, p: &Value) -> Result<Value> {
         let ids = top_level(doc, &ids);
         let top = *ids.last().ok_or(EngineError::NoLayer(LayerId(0)))?;
         let name = name.unwrap_or_else(|| doc.next_layer_name("Group"));
-        let gid = doc.insert_above(Some(top), Layer::group(name, vec![]));
+        // Photoshop creates the group collapsed, so the panel shows one row in place of the layers.
+        let mut group = Layer::group(name, vec![]);
+        if let LayerContent::Group(g) = &mut group.content {
+            g.expanded = false;
+        }
+        let gid = doc.insert_above(Some(top), group);
         let mut children = Vec::with_capacity(ids.len());
         for id in &ids {
             children.push(doc.remove(*id).ok_or(EngineError::NoLayer(*id))?);
@@ -2473,6 +2565,7 @@ mod tests {
         let docu = doc(&s);
         let gl = docu.layer(g).unwrap();
         assert_eq!(gl.name, "Pair");
+        assert!(matches!(&gl.content, LayerContent::Group(gr) if !gr.expanded), "created collapsed");
         assert_eq!(gl.children().unwrap().iter().map(|l| l.id).collect::<Vec<_>>(), vec![a, c]);
         // Root (bottom-to-top): Background, b, Pair (where c was), d.
         assert_eq!(docu.layers.iter().map(|l| l.id).skip(1).collect::<Vec<_>>(), vec![b, g, d]);
@@ -2481,8 +2574,10 @@ mod tests {
         assert_eq!(doc(&s).layers.len(), 5);
         // ⌘G with several selected groups them too.
         select_all(&mut s, &[b, d]);
-        s.execute("layer.groupLayers", json!({})).unwrap();
+        let g = LayerId(s.execute("layer.groupLayers", json!({})).unwrap()["layer"].as_u64().unwrap());
         assert_eq!(doc(&s).layers.len(), 4);
+        // Both create the group collapsed, as Photoshop does (#5571).
+        assert!(matches!(&doc(&s).layer(g).unwrap().content, LayerContent::Group(gr) if !gr.expanded));
     }
 
     #[test]

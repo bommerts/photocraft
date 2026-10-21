@@ -97,17 +97,37 @@ impl Tile {
             return None;
         }
         let ts = TILE_SIZE as usize;
+        // A row of `dp`, compared block by block: an untouched row (most rows of a soft brush
+        // stroke's tiles) costs a few slice compares instead of one per pixel. A pixel differs
+        // where any of its bytes does, so the first and last differing bytes give the first and
+        // last differing pixels.
+        let blank = dp.repeat(ts);
         let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
         for (y, row) in self.data.chunks_exact(ts * bpp).enumerate() {
-            let Some(first) = row.chunks_exact(bpp).position(|px| px != dp) else { continue };
-            let last = ts - 1 - row.chunks_exact(bpp).rev().position(|px| px != dp).unwrap_or(0);
-            x0 = x0.min(first);
-            x1 = x1.max(last + 1);
+            let Some(first) = first_difference(row, &blank) else { continue };
+            let Some(last) = last_difference(row, &blank) else { continue };
+            x0 = x0.min(first / bpp);
+            x1 = x1.max(last / bpp + 1);
             y0 = y0.min(y);
             y1 = y + 1;
         }
         (x0 != usize::MAX).then_some((x0 as u16, y0 as u16, x1 as u16, y1 as u16))
     }
+}
+
+/// Bytes compared at once while looking for a difference in a tile row.
+const DIFF_BLOCK: usize = 64;
+
+/// Index of the first byte where `a` and `b` (the same length) differ.
+fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    let (k, (x, y)) = a.chunks(DIFF_BLOCK).zip(b.chunks(DIFF_BLOCK)).enumerate().find(|(_, (x, y))| x != y)?;
+    x.iter().zip(y).position(|(p, q)| p != q).map(|i| k * DIFF_BLOCK + i)
+}
+
+/// Index of the last byte where `a` and `b` (the same length) differ.
+fn last_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    let (k, (x, y)) = a.chunks(DIFF_BLOCK).zip(b.chunks(DIFF_BLOCK)).enumerate().rfind(|(_, (x, y))| x != y)?;
+    x.iter().zip(y).rposition(|(p, q)| p != q).map(|i| k * DIFF_BLOCK + i)
 }
 
 #[derive(Clone, Debug)]
@@ -321,10 +341,20 @@ impl Surface {
         if !self.tiles.contains_key(&c) {
             let tile = Arc::new(Tile::try_filled(&self.format, &self.default_pixel)?);
             self.tiles.insert(c, tile);
-        } else if self.tiles.get(&c).is_some_and(|t| Arc::strong_count(t) > 1) {
-            let original = self.tiles.get(&c).ok_or(AllocationError::SizeOverflow)?;
-            let tile = Arc::new(original.try_clone()?);
-            self.tiles.insert(c, tile);
+        } else if self.tiles.get_mut(&c).is_some_and(|t| Arc::get_mut(t).is_none()) {
+            let original = self.tiles.remove(&c).ok_or(AllocationError::SizeOverflow)?;
+            let tile = match Arc::try_unwrap(original) {
+                // Weak cache references must not force a pixel-buffer copy.
+                Ok(tile) => tile,
+                Err(original) => match original.try_clone() {
+                    Ok(tile) => tile,
+                    Err(error) => {
+                        self.tiles.insert(c, original);
+                        return Err(error);
+                    }
+                },
+            };
+            self.tiles.insert(c, Arc::new(tile));
         }
         self.tiles.get_mut(&c).and_then(Arc::get_mut).ok_or(AllocationError::SizeOverflow)
     }
@@ -1481,6 +1511,23 @@ mod tests {
     }
 
     #[test]
+    fn fallible_tile_edits_move_weakly_cached_pixels_and_copy_shared_pixels() {
+        for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F] {
+            let mut surface = Surface::new(fmt);
+            let coord = TileCoord::new(0, 0);
+            let pixels = surface.try_tile_mut(coord).unwrap().bytes().as_ptr();
+            let weak = Arc::downgrade(surface.tile(coord).unwrap());
+            let tile = surface.try_tile_mut(coord).unwrap();
+            assert_eq!(tile.bytes().as_ptr(), pixels);
+            assert!(weak.upgrade().is_none());
+            let snapshot = surface.clone();
+            surface.try_write_region(Rect::new(0, 0, 1, 1), &[1.0; 4]).unwrap();
+            assert_eq!(snapshot.pixel(0, 0), vec![0.0; 4]);
+            assert_eq!(surface.pixel(0, 0), vec![1.0; 4]);
+        }
+    }
+
+    #[test]
     fn fill_rect_shares_covered_tiles_and_edits_stay_local() {
         // A 300000² background used to materialize ~360 GB of tiles (#705).
         let mut s = Surface::new(PixelFormat::RGBA8);
@@ -1620,6 +1667,42 @@ mod tests {
         assert_eq!(t.content_bounds(&[255]).map(|b| (b.0, b.1)), Some((0, 0)));
         // A malformed pixel is no content, not a panic.
         assert_eq!(t.content_bounds(&[]), None);
+    }
+
+    #[test]
+    fn tile_content_bounds_match_a_per_pixel_scan() {
+        // One differing byte at each position of a pixel, at and around the compare-block
+        // boundaries, in every pixel size; and a pixel that differs from `dp` in every byte.
+        fn per_pixel(t: &Tile, dp: &[u8]) -> Option<(u16, u16, u16, u16)> {
+            let (bpp, ts) = (dp.len(), TILE_SIZE as usize);
+            let mut b: Option<(usize, usize, usize, usize)> = None;
+            for (i, px) in t.bytes().chunks_exact(bpp).enumerate() {
+                if px != dp {
+                    let (x, y) = (i % ts, i / ts);
+                    let (x0, y0, x1, y1) = b.unwrap_or((x, y, x, y));
+                    b = Some((x0.min(x), y0.min(y), x1.max(x), y1.max(y)));
+                }
+            }
+            b.map(|(x0, y0, x1, y1)| (x0 as u16, y0 as u16, x1 as u16 + 1, y1 as u16 + 1))
+        }
+        for bpp in [1, 2, 3, 4, 6, 8, 16] {
+            let dp: Vec<u8> = (0..bpp).map(|i| (i * 37 + 5) as u8).collect();
+            let row = TILE_SIZE as usize * bpp;
+            for spots in [vec![], vec![0], vec![row - 1], vec![63, 64], vec![row * 7 + 127, row * 7 + 128, row * 200 + 5], vec![row * 255 + row / 2]] {
+                for byte in 0..bpp {
+                    let mut data = dp.repeat(TILE_SIZE as usize * TILE_SIZE as usize);
+                    for &s in &spots {
+                        data[s - s % bpp + byte] ^= 0x5a;
+                    }
+                    let t = Tile { data: data.into_boxed_slice() };
+                    assert_eq!(t.content_bounds(&dp), per_pixel(&t, &dp), "bpp {bpp}, spots {spots:?}, byte {byte}");
+                }
+            }
+            let mut data = dp.repeat(TILE_SIZE as usize * TILE_SIZE as usize);
+            data[row * 3 + 9 * bpp..row * 3 + 10 * bpp].iter_mut().for_each(|b| *b = !*b);
+            let t = Tile { data: data.into_boxed_slice() };
+            assert_eq!(t.content_bounds(&dp), Some((9, 3, 10, 4)), "bpp {bpp}");
+        }
     }
 
     #[test]

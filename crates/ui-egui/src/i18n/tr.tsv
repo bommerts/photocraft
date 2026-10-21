@@ -310,6 +310,7 @@
 	Blending Options…	Karışım Seçenekleri…
 	Bevel & Emboss…	Eğim ve Kabartma…
 	Use Global Light	Global Light'ı kullanın
+	Overprint	Üst Baskı
 	Inner Shadow…	İç Gölge…
 	Inner Glow…	İç Işıma…
 	Satin…	Saten…
@@ -4019,6 +4020,10 @@ cameraData	Lens	Lens
 # DDS Options (#1327)
 	DDS Options	DDS Seçenekleri
 	Generate Mipmaps	Mipmap oluştur
+
+# Color Table (.act) dialog
+	There is no color table to save.	Kaydedilecek renk tablosu yok.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} renk {file} konumuna kaydedildi
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU bağdaştırıcısı

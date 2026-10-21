@@ -319,6 +319,7 @@
 	Blending Options…	Overvloeiopties…
 	Bevel & Emboss…	Schuine kant en reliëf…
 	Use Global Light	Globaal licht gebruiken
+	Overprint	Overdrukken
 	Inner Shadow…	Binnenschaduw…
 	Inner Glow…	Gloed binnen…
 	Satin…	Satijn…
@@ -4051,6 +4052,10 @@ curves	Smooth	Vloeiend maken
 # DDS Options (#1327)
 	DDS Options	DDS-opties
 	Generate Mipmaps	Mipmaps genereren
+
+# Color Table (.act) dialog
+	There is no color table to save.	Er is geen kleurtabel om op te slaan.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} kleur opgeslagen in {file}|{n} kleuren opgeslagen in {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU-adapter

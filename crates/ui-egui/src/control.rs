@@ -20,9 +20,11 @@
 //! - The synthetic input methods reject unknown fields, wrong types, unknown enum values and
 //!   out-of-range numbers before acting, naming the parameter (#2449)
 //! - `ui.resize {width, height}`: resize the main window
-//! - `ui.gpu.simulateLoss {error?}`: act as if the wgpu device was lost (or, with `error: true`,
-//!   reported an error): the app switches to the CPU renderer for the rest of the session, as on a
-//!   real loss. For testing the fallback; returns whether a GPU canvas was active
+//! - `ui.gpu.simulateLoss {error?, destroy?}`: act as if the wgpu device was lost (or, with
+//!   `error: true`, reported an error): the app switches to the CPU renderer for the rest of the
+//!   session, as on a real loss. For testing the fallback; returns whether a GPU canvas was active.
+//!   `destroy: true` destroys the window's real device instead, as a driver reset does: the app
+//!   saves its unsaved documents for recovery and closes (#3438); returns `destroyed`
 //! - `ui.screenshot {path?, focus?}`: capture the main window (PNG). Raises the window first (default)
 //!   because occluded macOS windows stop rendering
 //! - `ui.focus`: bring the main window to the front
@@ -1217,6 +1219,11 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
             ok(Value::Null)
         }
         "ui.gpu.simulateLoss" => {
+            if p.get("destroy").and_then(Value::as_bool).unwrap_or(false) {
+                let destroyed = app.destroy_window_device();
+                ctx.request_repaint();
+                return ok(json!({"destroyed": destroyed}));
+            }
             let error = p.get("error").and_then(Value::as_bool).unwrap_or(false);
             let fault = if error {
                 photocraft_gpu::Fault::Error("simulated error (ui.gpu.simulateLoss)".into())
@@ -1880,7 +1887,7 @@ mod tests {
         let ids: Vec<_> = entries.iter().filter_map(|row| row.get("id").and_then(Value::as_str)).collect();
         assert_eq!(
             ids,
-            ["view.zoomIn", "view.zoomOut", "view.fitOnScreen", "view.fillScreen", "view.actualPixels", "view.twoHundredPercent", "view.printSize"]
+            ["view.fitOnScreen", "view.fillScreen", "view.actualPixels", "view.twoHundredPercent", "view.printSize", "view.zoomIn", "view.zoomOut"]
         );
         assert_eq!(call(&mut app, &ctx, "ui.context.choose", json!({"id":"select.all"}))["ok"], false);
         assert_eq!(call(&mut app, &ctx, "ui.context.choose", json!({"id":"view.twoHundredPercent"}))["ok"], true);
@@ -2324,6 +2331,20 @@ mod tests {
         assert!(app.ui.color_panel.background);
         assert_eq!(call(&mut app, &ctx, "ui.set", json!({"colorPanel": {"background": "yes"}}))["ok"], false);
         assert!(app.ui.color_panel.background, "a bad value changes nothing");
+    }
+
+    #[test]
+    fn ui_set_color_panel_slider_mode() {
+        use crate::state::ColorPanelSliderMode;
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        assert_eq!(app.ui.color_panel.slider_mode, ColorPanelSliderMode::Hsb);
+        assert_eq!(call(&mut app, &ctx, "ui.set", json!({"colorPanel": {"slider_mode": "rgb"}}))["ok"], true);
+        assert_eq!(app.ui.color_panel.slider_mode, ColorPanelSliderMode::Rgb);
+        assert_eq!(call(&mut app, &ctx, "ui.set", json!({"colorPanel": {"slider_mode": "hsb"}}))["ok"], true);
+        assert_eq!(app.ui.color_panel.slider_mode, ColorPanelSliderMode::Hsb);
+        assert_eq!(call(&mut app, &ctx, "ui.set", json!({"colorPanel": {"slider_mode": "cmyk"}}))["ok"], false);
+        assert_eq!(app.ui.color_panel.slider_mode, ColorPanelSliderMode::Hsb);
     }
 
     #[test]

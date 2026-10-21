@@ -302,6 +302,30 @@ pub(crate) fn try_clear_surface(s: &mut Surface, area: Rect, selection: Option<&
     })
 }
 
+/// Take the coverage a floating selection lifts out of `s` over `area`: each pixel loses its
+/// selection coverage k of alpha, down to none, so a selection made from the layer's own
+/// transparency leaves nothing behind (#7655), where [`try_clear_surface`] would leave a ghost.
+pub(crate) fn try_lift_coverage(s: &mut Surface, area: Rect, selection: &Surface) -> crate::Result<()> {
+    let fmt = s.format();
+    let n = fmt.channels();
+    if !fmt.alpha {
+        return Ok(());
+    }
+    let empty_default = s.default_bytes().iter().all(|&b| b == 0);
+    let whole = |full: bool| (full && empty_default).then_some(TileEdit::Drop);
+    edit_tiles(s, area, Some(selection), "lifting pixels", whole, |k, px| {
+        if k <= 0.0 {
+            return false;
+        }
+        let Some(a) = px.get_mut(n - 1) else { return false };
+        *a = (*a - k).max(0.0);
+        if *a <= 0.0 {
+            px.fill(0.0);
+        }
+        true
+    })
+}
+
 /// A whole-tile shortcut of [`edit_tiles`].
 enum TileEdit {
     /// Replace the tile with this (shared) one.

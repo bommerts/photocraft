@@ -37,6 +37,8 @@ fn busy() -> photocraft_engine::Session {
         s.execute("layer.layerStyle.dropShadow", json!({"layer": g})).unwrap();
         prev = Some(g);
     }
+    // Group Layers creates collapsed groups (#5571); these tests start with every group open.
+    s.execute("layer.setExpanded", json!({"all": true, "expanded": true})).unwrap();
     s
 }
 
