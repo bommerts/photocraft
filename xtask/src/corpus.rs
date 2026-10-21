@@ -8,7 +8,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::corpus_pins::{
-    self, AG_PSD_COMMIT, HEIC_RS_COMMIT, OPENEXR_COMMIT, PHOTOCRAFT_CORPUS_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_SHA256, PNGSUITE_URL, PSD_TOOLS_COMMIT,
+    self, AG_PSD_COMMIT, HEIC_RS_COMMIT, OPENEXR_COMMIT, PHOTOCRAFT_CORPUS_COMMIT, PHOTOCRAFT_CORPUS_GIMP_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_SHA256,
+    PNGSUITE_URL, PSD_TOOLS_COMMIT,
 };
 use crate::pinned::{PinnedCorpus, USER_AGENT};
 use crate::{cargo, root, run};
@@ -34,7 +35,7 @@ const CRITICAL: &[&str] = &[
     "crates/affinity/",
     "crates/raw/",
 ];
-/// `cargo xtask corpus [--all | --pngsuite | --download | --psd | --psd-tools | --heif | --exr | --pixls | --affinity | --photoshop [--local]] [--update-manifest]`
+/// `cargo xtask corpus [--all | --pngsuite | --download | --psd | --psd-tools | --heif | --exr | --pixls | --affinity | --photoshop [--local] | --gimp [--local]] [--update-manifest]`
 pub fn cmd(args: &[&str]) -> Result<(), String> {
     let update = args.contains(&"--update-manifest");
     let mut did = false;
@@ -77,6 +78,14 @@ pub fn cmd(args: &[&str]) -> Result<(), String> {
         }
         did = true;
     }
+    if args.contains(&"--gimp") {
+        if args.contains(&"--local") {
+            corpus_pins::GIMP.fetch_local(&local_clone()?, update)?;
+        } else {
+            corpus_pins::GIMP.fetch(update)?;
+        }
+        did = true;
+    }
     if !did {
         list();
     }
@@ -95,7 +104,7 @@ fn local_clone() -> Result<PathBuf, String> {
 }
 
 /// Fetches every corpus that is missing or stale (verified ones are left alone). With `local`,
-/// `corpus/photoshop` is copied from the authoring clone of photocraft-corpus instead. With
+/// `corpus/photoshop` and `corpus/gimp` are copied from the authoring clone of photocraft-corpus instead. With
 /// `update`, every pinned corpus is refetched and its manifest rewritten (`--update-manifest`).
 pub fn fetch_all(local: bool, update: bool) -> Result<(), String> {
     fetch_pngsuite()?;
@@ -105,10 +114,11 @@ pub fn fetch_all(local: bool, update: bool) -> Result<(), String> {
 }
 
 /// Calls `fetch(corpus, from_clone, update)` for every pinned corpus; `from_clone` is set for
-/// `corpus/photoshop` when `local`.
+/// the photocraft-corpus sets (`corpus/photoshop`, `corpus/gimp`) when `local`.
 fn fetch_pinned(local: bool, update: bool, mut fetch: impl FnMut(&PinnedCorpus, bool, bool) -> Result<(), String>) -> Result<(), String> {
     for c in corpus_pins::ALL {
-        fetch(c, local && std::ptr::eq(*c, &corpus_pins::PHOTOSHOP), update)?;
+        let ours = std::ptr::eq(*c, &corpus_pins::PHOTOSHOP) || std::ptr::eq(*c, &corpus_pins::GIMP);
+        fetch(c, local && ours, update)?;
     }
     Ok(())
 }
@@ -136,6 +146,9 @@ fn list() {
                      https://github.com/storytold/photocraft-corpus at {PHOTOCRAFT_CORPUS_COMMIT}
                      manifest xtask/photoshop-corpus.sha256. Fetch: --photoshop
                      (--photoshop --local copies from ../photocraft-corpus or $PHOTOCRAFT_CORPUS_REPO)
+  corpus/gimp/       [{}] our GIMP-authored XCF oracles with GIMP's PNG renderings (MIT OR Apache-2.0),
+                     from the same repository at {PHOTOCRAFT_CORPUS_GIMP_COMMIT}
+                     manifest xtask/gimp-corpus.sha256. Fetch: --gimp (--gimp --local copies from the clone)
   corpus/psd/        [{}] 170 small psd-tools + ag-psd files (MIT), psd-tools@{} and
                      ag-psd@{}, manifest xtask/psd-corpus.sha256. Fetch: --psd
   corpus/psd-tools/  [{}] the full psd-tools test set (MIT) at {PSD_TOOLS_COMMIT}
@@ -153,6 +166,7 @@ fn list() {
 Pins: xtask/src/corpus_pins.rs. Moving one: change it, then --<name> --update-manifest.",
         corpus.display(),
         status(corpus_pins::PHOTOSHOP.is_current()),
+        status(corpus_pins::GIMP.is_current()),
         status(corpus_pins::PSD_MIXED.is_current()),
         &PSD_TOOLS_COMMIT[..12],
         &AG_PSD_COMMIT[..12],

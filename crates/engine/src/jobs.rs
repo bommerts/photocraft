@@ -748,6 +748,26 @@ impl Session {
         }
         // Pixel commands follow the Channels panel target unless the caller names one.
         let run_params = self.admit(id, spec, &params)?;
+        // This UI-only disclosure preference applies to both `execute` and `start`:
+        // desktop UI normally calls `start`, even for synchronous Layer Style commands.
+        // The layer the command will change, named as the command accepts it (id or name), else the
+        // active one. `layer.layerStyle.clear` needs no case: it leaves no effects, so nothing expands.
+        // Transfer Effects changes its destination (`to`), not the layer it takes the effects from.
+        let new_fx_target = if id.starts_with("layer.layerStyle.") {
+            let target = if id == "layer.layerStyle.transferEffects" {
+                crate::commands::layer_param(self, &json!({"layer": params.get("to").cloned().unwrap_or(Value::Null)}))
+            } else {
+                crate::commands::layer_param(self, &params)
+            }
+            .ok();
+            self.active().and_then(|st| {
+                let target = target?;
+                (st.doc.layer(target)?.effects.items.is_empty()).then_some((st.doc.id, target))
+            })
+        } else {
+            None
+        };
+        let expand_new_fx = crate::commands::layer_panel_option(self, "expandNewEffects", true);
         self.coalesce_request = params.get("coalesce").and_then(Value::as_str).map(str::to_string);
         self.color_restrict = crate::channel_cmds::color_restriction(self, id, &run_params);
         self.jobs.spawn = background;
@@ -787,6 +807,17 @@ impl Session {
             (Ok(v), None) => {
                 if let Some(before) = before {
                     self.add_relayout_damage(&before);
+                }
+                if let Some((doc_id, layer_id)) = new_fx_target
+                    && let Some(st) = self.active_mut()
+                    && st.doc.id == doc_id
+                    && st.doc.layer(layer_id).is_some_and(|l| !l.effects.items.is_empty())
+                {
+                    if expand_new_fx {
+                        st.fx_collapsed.retain(|id| *id != layer_id);
+                    } else if !st.fx_collapsed.contains(&layer_id) {
+                        st.fx_collapsed.push(layer_id);
+                    }
                 }
                 self.after_command(id, params, spec.journal, Some(nested_from));
                 Ok(Started::Done(v))

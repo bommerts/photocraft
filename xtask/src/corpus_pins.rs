@@ -14,6 +14,9 @@ use crate::pinned::{PinnedCorpus, Upstream};
 /// https://github.com/storytold/photocraft-corpus: our Photoshop-authored oracle PSDs
 /// (`photoshop/`). Bump through a PR after committing there.
 pub const PHOTOCRAFT_CORPUS_COMMIT: &str = "f5b1178cab15309e05b7b504545df3c701f6d8fd";
+/// https://github.com/storytold/photocraft-corpus: our GIMP-authored XCF oracles (`gimp/`). Its own
+/// pin, so that set can move without refetching `photoshop/`. Bump through a PR after committing there.
+pub const PHOTOCRAFT_CORPUS_GIMP_COMMIT: &str = "fbe9227a48d06de87061e527541209a178fd685c";
 /// https://github.com/psd-tools/psd-tools (MIT): `tests/psd_files` (main, 2026-10-05).
 pub const PSD_TOOLS_COMMIT: &str = "96eb134c17b2c65edf4c4151c0f00b802ada86c2";
 /// https://github.com/Agamnentzar/ag-psd (MIT): `test/` (master, 2026-07-02).
@@ -64,6 +67,31 @@ pub const PHOTOSHOP: PinnedCorpus = PinnedCorpus {
             "# Photoshop oracle corpus\n\n`photoshop/` of https://github.com/storytold/photocraft-corpus at commit {PHOTOCRAFT_CORPUS_COMMIT} \
              (see `README.md`). MIT OR Apache-2.0, authored by the PhotoCraft contributors. Fetched and sha256-verified by \
              `cargo xtask corpus --photoshop` against `{}`. Gitignored; never commit these files.\n",
+            c.manifest
+        )
+    },
+};
+
+/// `corpus/gimp`: 14 XCF files written by GIMP 3.2.6 by the photocraft-corpus generator, each with
+/// GIMP's merged rendering as a PNG (28 files), the oracles of `photocraft-io`'s XCF reader.
+pub const GIMP: PinnedCorpus = PinnedCorpus {
+    name: "gimp",
+    dest: "gimp",
+    upstreams: &[Upstream {
+        prefix: "",
+        repo: "storytold/photocraft-corpus",
+        commit: PHOTOCRAFT_CORPUS_GIMP_COMMIT,
+        subdir: "gimp",
+        extras: &[("README.md", "README.md"), ("LICENSE-MIT", "LICENSE-MIT"), ("LICENSE-APACHE", "LICENSE-APACHE")],
+    }],
+    manifest: "xtask/gimp-corpus.sha256",
+    exts: &["xcf", "png"],
+    subset: false,
+    sources_md: |c| {
+        format!(
+            "# GIMP XCF oracle corpus\n\n`gimp/` of https://github.com/storytold/photocraft-corpus at commit {PHOTOCRAFT_CORPUS_GIMP_COMMIT} \
+             (see `README.md`). MIT OR Apache-2.0, authored by the PhotoCraft contributors with GIMP 3.2.6. Fetched and sha256-verified by \
+             `cargo xtask corpus --gimp` against `{}`. Gitignored; never commit these files.\n",
             c.manifest
         )
     },
@@ -240,7 +268,7 @@ pub const AFFINITY: PinnedCorpus = PinnedCorpus {
     },
 };
 /// Every pinned corpus, in fetch order.
-pub const ALL: &[&PinnedCorpus] = &[&PSD_MIXED, &PSD_TOOLS, &PHOTOSHOP, &HEIF, &EXR, &AFFINITY];
+pub const ALL: &[&PinnedCorpus] = &[&PSD_MIXED, &PSD_TOOLS, &PHOTOSHOP, &GIMP, &HEIF, &EXR, &AFFINITY];
 
 /// `corpus/pixls`: real camera raws from <https://raw.pixls.us> (released into the public
 /// domain / CC0 by their photographers; see ATTRIBUTION.md). One file per decode path

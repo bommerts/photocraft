@@ -26,6 +26,7 @@ pub mod artboard_tool;
 pub mod artboard_ui;
 pub(crate) mod background_redraw;
 pub mod bidi_text;
+pub(crate) mod bitmap_dialog;
 mod blend_keys;
 pub(crate) mod blend_preview;
 pub mod blur_pins;
@@ -106,6 +107,7 @@ pub mod gpu_status;
 pub mod gradient_ui;
 pub mod guide_layout_ui;
 pub mod guide_select;
+pub mod history_menu_ui;
 pub mod hold_keys;
 pub mod i18n;
 mod icon_data;
@@ -124,6 +126,7 @@ pub mod layer_row_ui;
 pub mod layer_style;
 mod layer_transfer;
 pub mod layer_tree_ui;
+pub mod layers_panel_ui;
 mod layout_keys;
 pub mod links;
 pub mod liquify_ui;
@@ -137,6 +140,7 @@ pub mod menu_nav;
 pub mod menus;
 pub mod monitor_status;
 pub mod move_box;
+pub mod move_distance;
 pub mod move_hover;
 pub mod move_lock;
 pub mod move_mods;
@@ -238,6 +242,7 @@ pub mod wide_angle_ui;
 pub mod widgets;
 pub mod work_area;
 pub mod workspace_ui;
+pub mod zoom_hold;
 pub mod zoom_levels;
 pub mod zoom_tool;
 
@@ -438,8 +443,9 @@ pub type OpenUrlFn = Box<dyn Fn(&str) -> Result<(), String>>;
 pub type EncodePngFn = Box<dyn Fn(u32, u32, &[u8]) -> Result<Vec<u8>, String>>;
 /// Put an RGBA8 image (width, height, pixels) on the OS clipboard.
 pub type ClipboardSetFn = Box<dyn FnMut(u32, u32, &[u8]) -> Result<(), String>>;
-/// Read an RGBA8 image from the OS clipboard.
-pub type ClipboardGetFn = Box<dyn FnMut() -> Option<(u32, u32, Vec<u8>)>>;
+/// Read an RGBA8 image from the OS clipboard. `Ok(None)` means no image is available;
+/// `Err` means the contents could not be read and must not invalidate the internal copy.
+pub type ClipboardGetFn = Box<dyn FnMut() -> Result<Option<(u32, u32, Vec<u8>)>, String>>;
 /// Whether the last clipboard read found no way to reach the OS clipboard at all.
 pub type ClipboardUnreadableFn = Box<dyn Fn() -> bool>;
 /// Shared queue of (file name, bytes) delivered asynchronously.
@@ -491,6 +497,8 @@ pub type CapsLockFn = Box<dyn FnMut() -> bool>;
 pub type WindowFrameFn = Box<dyn FnMut()>;
 /// The caption buttons' current style ([`Services::caption_style`]).
 pub type CaptionStyleFn = Box<dyn Fn(&egui::Context) -> CaptionStyle>;
+/// Physical right mouse button or stylus barrel button down (Windows; read for brush resize).
+pub type RightButtonDownFn = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// Platform services injected by the app binary (file dialogs, codecs), keeping this crate free of
 /// I/O dependencies.
@@ -587,6 +595,8 @@ pub struct Services {
     /// style and button layout). Read every frame, with the context to wake when it changes;
     /// `None` keeps Windows' buttons at the right end.
     pub caption_style: Option<CaptionStyleFn>,
+    /// Physical right mouse button or pen barrel button currently down.
+    pub right_button_down: Option<RightButtonDownFn>,
     /// The persistent brush preset store, loading in the background (desktop; see
     /// `photocraft_engine::preset_store`). Attached to the session once it arrives; without
     /// one, brush presets are session-only unless the shell attached a store before startup.
@@ -657,10 +667,16 @@ pub struct PhotocraftApp {
     pub(crate) move_preview: Option<move_ui::MovePreview>,
     /// Move tool › Show Highlight on Rollover: the last hover answer (`move_hover`).
     pub(crate) move_hover: Option<move_hover::Hover>,
+    /// Smart Guides distances shown with ⌘ held over the canvas: the last answer (`move_distance`).
+    pub(crate) move_distance: Option<move_distance::Cache>,
     /// Object Selection › Object Finder: the hover preview (`object_finder`).
     pub(crate) object_finder: Option<object_finder::Finder>,
     /// A blend mode hovered in the Layers panel, shown live (`blend_preview`).
     pub(crate) blend_preview: Option<blend_preview::BlendPreview>,
+    /// Layers panel drag: temporary reordered document displayed until mouse release.
+    pub(crate) reorder_preview: Option<layers_panel_ui::ReorderPreview>,
+    /// Whether the currently dragged layer is over a valid destination this frame.
+    pub(crate) reorder_preview_hit: bool,
     /// Patch Tool drag: the healed document at the pointer (`patch_preview`).
     pub(crate) patch_preview: Option<patch_preview::PatchPreview>,
     /// Content-Aware Move drag or box shown with its result (`cam_preview`).
@@ -814,8 +830,11 @@ pub struct PhotocraftApp {
     /// The filter a "Rasterize?" prompt answered for, run after the dialog closes, where the
     /// egui context is available again (rasterize_prompt).
     pub(crate) pending_after_prompt: Option<(String, serde_json::Value)>,
-    /// Signature of the image we last put on the OS clipboard (to tell ours from other apps').
+    /// Last mirrored or imported OS image; this can predate the current internal copy.
     os_clip_sig: Option<u64>,
+    /// The session copy, if any, need not track the OS clipboard. An older OS signature is kept
+    /// to recognize unchanged system contents when exporting a newer copy failed or was disabled.
+    clip_unmirrored: bool,
     /// The session clipboard currently holds an image imported from the OS clipboard: it has no
     /// original position, so Paste centres it (see `menus` "edit.paste").
     pub(crate) clip_external: bool,
@@ -928,8 +947,11 @@ impl PhotocraftApp {
             menu_cache: None,
             move_preview: None,
             move_hover: None,
+            move_distance: None,
             object_finder: None,
             blend_preview: None,
+            reorder_preview: None,
+            reorder_preview_hit: false,
             patch_preview: None,
             cam_preview: None,
             magnetic: Default::default(),
@@ -998,6 +1020,7 @@ impl PhotocraftApp {
             clone_preview: None,
             info_sample: None,
             os_clip_sig: None,
+            clip_unmirrored: true,
             clip_external: false,
             clip_read_for_paste: false,
             transform_preview: None,
@@ -1043,6 +1066,7 @@ impl PhotocraftApp {
         };
         // Saved preferences are in place before the first frame; recovery starts in upkeep.
         prefs_ui::load(&mut app);
+        layers_panel_ui::restore_options(&mut app);
         // After the saved preferences, which say whether the set was already offered.
         kys_import::offer_import(&mut app);
         notices::wayland_file_drop_guidance(&mut app);
@@ -1058,6 +1082,9 @@ impl PhotocraftApp {
         let tile = self.session.prefs().performance.cache_tile_size;
         // Escaped driver/setup panics must leave the session and CPU canvas alive.
         self.perf.gpu_info.set_adapter(&rs.adapter.get_info());
+        // The browser has no adapter list (egui-wgpu only has it natively).
+        #[cfg(not(target_arch = "wasm32"))]
+        self.perf.gpu_info.set_available(&rs.available_adapters);
         let gpu = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gpu_canvas::GpuCanvas::with_tile(&rs, Some(tile)))) {
             Ok(gpu) => gpu,
             Err(payload) => {
@@ -1170,15 +1197,11 @@ impl PhotocraftApp {
         if let Some(r) = crate::crop_ui::intercept(self, id) {
             return r;
         }
-        let suppress_events = self.automation_input && self.session.prefs().script_events.enabled;
-        if suppress_events {
-            self.session.edit_prefs(|prefs| prefs.script_events.enabled = false);
-        }
         let t0 = gpu_canvas::now_ms();
         // The OS clipboard is read only on an explicit paste, never in the background (privacy, CPU).
         if matches!(id, "edit.paste" | "edit.pasteSpecial.pasteInPlace" | "file.newFromClipboard") {
             if !clip_read {
-                self.import_os_clipboard();
+                self.import_os_clipboard()?;
             }
             if self.session.clipboard.is_none() && self.services.clipboard_get_image.is_some() {
                 if self.services.clipboard_unreadable.as_ref().is_some_and(|unreadable| unreadable()) {
@@ -1192,6 +1215,10 @@ impl PhotocraftApp {
                 self.ui.status_error = false;
                 return Ok(serde_json::json!({"pasted": false}));
             }
+        }
+        let suppress_events = self.automation_input && self.session.prefs().script_events.enabled;
+        if suppress_events {
+            self.session.edit_prefs(|prefs| prefs.script_events.enabled = false);
         }
         // Long commands become background jobs when enabled (`jobs_ui`); the rest run inline.
         let params = self.with_mask_target(id, params);
@@ -1220,13 +1247,24 @@ impl PhotocraftApp {
             jobs_ui::run(self, id, params)
         };
         let creates_adjustment_or_fill = id.starts_with("layer.newAdjustmentLayer.") || id.starts_with("layer.newFillLayer.");
-        if r.is_ok() && (ADDS_LAYER_MASK.contains(&id) || creates_adjustment_or_fill) {
-            // Adding a layer mask targets it, as in Photoshop (#2166).
+        if r.is_ok() && ADDS_LAYER_MASK.contains(&id) {
+            // Adding an explicit mask targets it, as in Photoshop (#2166).
             self.ui.mask_target = true;
             self.ui.vector_mask_target = false;
-            // Properties still shows the new adjustment or fill layer's settings, not its mask,
-            // as in Photoshop (#3369): clicking the mask thumbnail switches it to the mask.
-            self.ui.properties_layer = if creates_adjustment_or_fill { self.session.active().and_then(|st| st.active_layer).map(|l| l.0) } else { None };
+            self.ui.properties_layer = None;
+        } else if r.is_ok() && creates_adjustment_or_fill {
+            // Panel Options may suppress a fill layer's default mask. Never target a
+            // nonexistent mask; an active path creates a vector mask instead.
+            let masks = self
+                .session
+                .active()
+                .and_then(|st| st.active_layer.and_then(|id| st.doc.layer(id)))
+                .map(|layer| (layer.mask.is_some(), layer.vector_mask.is_some()))
+                .unwrap_or((false, false));
+            self.ui.mask_target = masks.0;
+            self.ui.vector_mask_target = !masks.0 && masks.1;
+            // Keep Properties on the new layer contents, as on main (#3369).
+            self.ui.properties_layer = self.session.active().and_then(|st| st.active_layer).map(|l| l.0);
         }
         if r.is_ok() && creates_adjustment_or_fill {
             // Properties comes to the front, shown and expanded, so the new layer's settings can
@@ -1237,6 +1275,26 @@ impl PhotocraftApp {
                 self.ui.dock_tabs.properties = 0;
                 dock::reveal(self, dock::Group::Properties);
             }
+        }
+        // Making a new selection reveals its outline after View > Extras was hidden (#5597).
+        // These interactive selection commands complete inline; a failed command, deselection,
+        // or painting inside an existing selection must leave the user's view choice alone.
+        if r.as_ref().is_ok_and(|v| v.get("changed") != Some(&Value::Bool(false)) && v.get("pending") != Some(&Value::Bool(true)))
+            && matches!(
+                id,
+                "select.rect"
+                    | "select.lasso"
+                    | "select.magneticLasso"
+                    | "select.magicWand"
+                    | "select.quick"
+                    | "select.object"
+                    | "select.loadSelection"
+                    | "select.loadLuminosity"
+                    | "path.toSelection"
+            )
+            && self.session.active().is_some_and(|st| st.doc.selection.is_some())
+        {
+            self.ui.view.extras = true;
         }
         if r.is_ok() && id == "select.toWorkPath" {
             // Make Work Path selects the new work path in the Paths panel, as in Photoshop.
@@ -1313,6 +1371,7 @@ impl PhotocraftApp {
         // ... and to the document it was started on.
         crate::canvas::polygon_cancel_stale(self);
         crate::crop_ui::cancel_stale(self);
+        crate::perspective_crop_ui::cancel_stale(self);
         let ids: Vec<DocId> = self.session.documents().iter().map(|d| d.doc.id).collect();
         // Where the document of view `i` is now. Views not tracked yet keep their index.
         let now = |i: usize| match self.view_docs.get(i) {
@@ -2149,6 +2208,7 @@ impl eframe::App for PhotocraftApp {
         workspace_ui::windows(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        layers_panel_ui::show_dialog(self, &ctx);
         rasterize_prompt::run_pending(self, &ctx);
         jobs_ui::dialog(self, &ctx);
         discard_ui::show(self, &ctx);
@@ -2555,6 +2615,16 @@ impl PhotocraftApp {
         self.bounds_cache.insert(key, (rev, b));
         b
     }
+
+    /// The box Properties › Transform shows for `layer` (X, Y, W, H): its pixels' bounds, but a
+    /// soft shape's path and stroke, whose Density and Feather render past them (#5846), as its
+    /// transform frame does.
+    pub fn layer_frame_bounds(&mut self, layer: &photocraft_doc::Layer, surface: &photocraft_raster::Surface) -> photocraft_geom::Rect {
+        match &layer.content {
+            photocraft_doc::LayerContent::Shape(sh) if sh.has_soft_mask() => photocraft_compose::hard_shape_bounds(sh).unwrap_or(photocraft_geom::Rect::EMPTY),
+            _ => self.cached_bounds(layer.id.0, surface),
+        }
+    }
 }
 
 impl PhotocraftApp {
@@ -2743,6 +2813,7 @@ fn channel_tint(mode: photocraft_doc::ColorMode, k: usize, byte: u8, in_color: b
 impl PhotocraftApp {
     /// Mirror the session clipboard onto the OS clipboard (RGBA8).
     fn export_os_clipboard(&mut self) {
+        self.clip_unmirrored = true;
         if !self.session.prefs().general.export_clipboard {
             return;
         }
@@ -2756,6 +2827,7 @@ impl PhotocraftApp {
         let bytes: Vec<u8> = px.into_iter().flatten().collect();
         if set(b.width(), b.height(), &bytes).is_ok() {
             self.os_clip_sig = Some(clip_signature(b.width(), b.height(), &bytes));
+            self.clip_unmirrored = false;
         }
     }
 
@@ -2772,7 +2844,9 @@ impl PhotocraftApp {
                 }
             }
         }
-        self.import_os_clipboard();
+        if self.import_os_clipboard().is_err() {
+            return f;
+        }
         if let Some(c) = self.session.clipboard.as_ref().filter(|c| !c.bounds.is_empty()) {
             crate::new_doc_ui::set_clipboard(&mut f, c.bounds.width(), c.bounds.height());
         }
@@ -2781,22 +2855,44 @@ impl PhotocraftApp {
 
     /// If the OS clipboard holds an image that isn't the one we put there, make it the session
     /// clipboard (so ⌘V pastes screenshots and images copied in other apps, like Photoshop).
-    /// Returns true when a new external image was imported. Once the OS clipboard no longer holds
+    /// Returns `Ok(true)` when a new external image was imported. Once the OS clipboard no longer holds
     /// the image we mirrored or imported (text or a file was copied since), that image is stale:
-    /// it is dropped rather than pasted.
-    pub(crate) fn import_os_clipboard(&mut self) -> bool {
-        let Some(get) = self.services.clipboard_get_image.as_mut() else { return false };
-        let image = get().filter(|(w, h, bytes)| *w > 0 && *h > 0 && bytes.len() == *w as usize * *h as usize * 4);
+    /// it is dropped rather than pasted. Unexported internal copies survive unavailable or empty
+    /// system clipboards.
+    pub(crate) fn import_os_clipboard(&mut self) -> Result<bool, String> {
+        let Some(get) = self.services.clipboard_get_image.as_mut() else { return Ok(false) };
+        // A read failure says nothing about the clipboard contents. Keep our editable copy and
+        // its signature rather than treating the failure as an empty image.
+        let image = match get() {
+            Ok(image) => image,
+            Err(error) => {
+                // An unexported copy remains usable without an OS clipboard (for example, in
+                // a Wayland sandbox). Mirrored/imported copies still require a successful read
+                // before pasting, because their system contents may have changed.
+                if self.clip_unmirrored && !self.clip_external && self.session.clipboard.is_some() {
+                    return Ok(false);
+                }
+                if self.session.clipboard.is_none() && self.services.clipboard_unreadable.as_ref().is_some_and(|unreadable| unreadable()) {
+                    // Let paste explain the unavailable backend without treating a saved copy as empty.
+                    return Ok(false);
+                }
+                self.ui.status = error.clone();
+                self.ui.status_error = true;
+                return Err(error);
+            }
+        };
+        let image = image.filter(|(w, h, bytes)| *w > 0 && *h > 0 && bytes.len() == *w as usize * *h as usize * 4);
         let Some((w, h, bytes)) = image else {
-            if self.os_clip_sig.take().is_some() {
+            if self.os_clip_sig.take().is_some() && !self.clip_unmirrored {
                 self.session.clipboard = None;
                 self.clip_external = false;
+                self.clip_unmirrored = true;
             }
-            return false;
+            return Ok(false);
         };
         let sig = clip_signature(w, h, &bytes);
         if self.os_clip_sig == Some(sig) && self.session.clipboard.is_some() {
-            return false;
+            return Ok(false);
         }
         let r = photocraft_geom::Rect::new(0, 0, w as i32, h as i32);
         let mut surface = photocraft_raster::Surface::from_interleaved(photocraft_color::PixelFormat::RGBA8, r, &bytes);
@@ -2804,7 +2900,8 @@ impl PhotocraftApp {
         self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r, layers: None, resolution: None });
         self.os_clip_sig = Some(sig);
         self.clip_external = true;
-        true
+        self.clip_unmirrored = false;
+        Ok(true)
     }
 }
 
@@ -2833,6 +2930,8 @@ mod pen_variants_tests;
 mod color_replacement_tests;
 #[cfg(test)]
 mod layer_shortcut_tests;
+#[cfg(test)]
+mod live_retouch_tests;
 #[cfg(test)]
 mod pencil_tests;
 #[cfg(test)]
@@ -2952,7 +3051,7 @@ mod clipboard_tests {
                 *a.lock().unwrap() = Some((w, h, px.to_vec()));
                 Ok(())
             })),
-            clipboard_get_image: Some(Box::new(move || b.lock().unwrap().clone())),
+            clipboard_get_image: Some(Box::new(move || Ok(b.lock().unwrap().clone()))),
             ..Default::default()
         };
         let mut app = PhotocraftApp::new(Session::new(), services);
@@ -2963,10 +3062,10 @@ mod clipboard_tests {
         let (w, h, px) = os.lock().unwrap().clone().unwrap();
         assert_eq!((w, h, px.len()), (8, 4, 8 * 4 * 4));
         // Our own image comes back unchanged (no re-import, keeps the original position).
-        assert!(!app.import_os_clipboard());
+        assert!(!app.import_os_clipboard().unwrap());
         // Text copied elsewhere replaces our image: nothing to paste, not the stale image.
         let ours = os.lock().unwrap().take();
-        assert!(!app.import_os_clipboard());
+        assert!(!app.import_os_clipboard().unwrap());
         assert!(app.session.clipboard.is_none());
         *os.lock().unwrap() = ours;
         app.run("edit.copy", serde_json::json!({})).unwrap();
@@ -3000,12 +3099,215 @@ mod clipboard_tests {
 
     type OsClip = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
 
+    #[test]
+    fn failed_clipboard_reads_preserve_editable_contents_until_retry() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for id in ["edit.paste", "edit.pasteSpecial.pasteInPlace", "file.newFromClipboard"] {
+            let os = OsClip::default();
+            let busy = Arc::new(AtomicBool::new(false));
+            let (write, read, unavailable) = (os.clone(), os.clone(), busy.clone());
+            let services = Services {
+                clipboard_set_image: Some(Box::new(move |w, h, bytes| {
+                    *write.lock().unwrap() = Some((w, h, bytes.to_vec()));
+                    Ok(())
+                })),
+                clipboard_get_image: Some(Box::new(move || {
+                    if unavailable.load(Ordering::SeqCst) { Err("clipboard is busy".into()) } else { Ok(read.lock().unwrap().clone()) }
+                })),
+                ..Default::default()
+            };
+            let mut app = PhotocraftApp::new(Session::new(), services);
+            app.run("file.new", serde_json::json!({"width": 80, "height": 60})).unwrap();
+            app.run("shape.create", serde_json::json!({"kind": "rect", "rect": [10, 10, 40, 20], "fill": "#ff0000"})).unwrap();
+            app.run("edit.copy", serde_json::json!({})).unwrap();
+            app.run("file.new", serde_json::json!({"width": 80, "height": 60})).unwrap();
+            let signature = app.os_clip_sig;
+            assert!(signature.is_some());
+            let before = app.session.active().unwrap().doc.walk().len();
+            busy.store(true, Ordering::SeqCst);
+            let result = crate::menus::invoke(&mut app, &egui::Context::default(), id, serde_json::json!({}));
+            assert_eq!(result.unwrap_err(), "clipboard is busy", "{id}");
+            assert!(app.ui.status_error);
+            assert_eq!(app.session.documents().len(), 2);
+            assert_eq!(app.session.active().unwrap().doc.walk().len(), before);
+            assert_eq!(app.os_clip_sig, signature);
+            assert!(app.session.clipboard.as_ref().unwrap().layers.is_some());
+            // The New dialog also reads the clipboard; a failed preset probe must preserve it.
+            app.new_document_fields();
+            assert_eq!(app.os_clip_sig, signature);
+            assert!(app.session.clipboard.as_ref().unwrap().layers.is_some());
+            // An automation error must not leave script events disabled by the dispatch guard.
+            app.automation_input = true;
+            app.session.edit_prefs(|prefs| prefs.script_events.enabled = true);
+            assert!(app.run(id, serde_json::json!({})).is_err());
+            assert!(app.session.prefs().script_events.enabled);
+            app.automation_input = false;
+            busy.store(false, Ordering::SeqCst);
+            app.run("edit.pasteSpecial.pasteInPlace", serde_json::json!({})).unwrap();
+            let state = app.session.active().unwrap();
+            assert!(matches!(state.doc.layer(state.active_layer.unwrap()).unwrap().content, photocraft_doc::LayerContent::Shape(_)));
+            assert!(!app.ui.status_error);
+        }
+    }
+
+    #[test]
+    fn internal_only_clipboard_remains_usable_when_native_access_fails() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for export in [true, false] {
+            for id in ["edit.paste", "edit.pasteSpecial.pasteInPlace", "file.newFromClipboard"] {
+                let os = OsClip::default();
+                let unavailable = Arc::new(AtomicBool::new(true));
+                let (read, failed) = (os.clone(), unavailable.clone());
+                let services = Services {
+                    clipboard_set_image: Some(Box::new(|_, _, _| Err("clipboard unavailable".into()))),
+                    clipboard_get_image: Some(Box::new(move || {
+                        if failed.load(Ordering::SeqCst) { Err("clipboard unavailable".into()) } else { Ok(read.lock().unwrap().clone()) }
+                    })),
+                    ..Default::default()
+                };
+                let mut app = PhotocraftApp::new(Session::new(), services);
+                app.session.edit_prefs(|prefs| prefs.general.export_clipboard = export);
+                app.run("file.new", serde_json::json!({"width": 80, "height": 60})).unwrap();
+                app.run("shape.create", serde_json::json!({"kind": "rect", "rect": [10, 10, 40, 20], "fill": "#ff0000"})).unwrap();
+                app.run("edit.copy", serde_json::json!({})).unwrap();
+                app.run("file.new", serde_json::json!({"width": 80, "height": 60})).unwrap();
+                assert!(app.os_clip_sig.is_none() && !app.clip_external);
+                let bounds = app.session.clipboard.as_ref().unwrap().bounds;
+                assert_eq!(app.new_document_fields()["__preset"], "Clipboard");
+                crate::menus::invoke(&mut app, &egui::Context::default(), id, serde_json::json!({})).unwrap();
+                assert!(app.session.clipboard.as_ref().unwrap().layers.is_some());
+                assert!(!app.ui.status_error);
+                if id == "file.newFromClipboard" {
+                    assert_eq!(app.session.documents().len(), 3);
+                    let doc = &app.session.active().unwrap().doc;
+                    assert_eq!((doc.size.width, doc.size.height), (bounds.width(), bounds.height()));
+                } else {
+                    assert_eq!(app.session.documents().len(), 2);
+                    let state = app.session.active().unwrap();
+                    assert!(matches!(state.doc.layer(state.active_layer.unwrap()).unwrap().content, photocraft_doc::LayerContent::Shape(_)));
+                }
+                app.run("edit.purge.clipboard", serde_json::json!({})).unwrap();
+                assert!(app.session.clipboard.is_none());
+                assert!(app.run("edit.paste", serde_json::json!({})).is_err(), "purged content must not be a fallback");
+                // The fallback is only for failed reads: a later successful external image wins.
+                *os.lock().unwrap() = Some((3, 2, [0u8, 0, 255, 255].repeat(6)));
+                unavailable.store(false, Ordering::SeqCst);
+                app.run("edit.paste", serde_json::json!({})).unwrap();
+                assert!(app.clip_external && app.os_clip_sig.is_some());
+                let clip = app.session.clipboard.as_ref().unwrap();
+                assert!(clip.layers.is_none());
+                assert_eq!((clip.bounds.width(), clip.bounds.height()), (3, 2));
+            }
+        }
+    }
+
+    #[test]
+    fn newer_unexported_copies_do_not_track_an_older_os_signature() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for imported in [true, false] {
+            for disable_export in [true, false] {
+                for copy_id in ["edit.copy", "edit.cut", "edit.copyMerged"] {
+                    let os = OsClip::default();
+                    let write_fails = Arc::new(AtomicBool::new(false));
+                    let read_fails = Arc::new(AtomicBool::new(false));
+                    let (write, read, failed_write, failed_read) = (os.clone(), os.clone(), write_fails.clone(), read_fails.clone());
+                    let services = Services {
+                        clipboard_set_image: Some(Box::new(move |w, h, bytes| {
+                            if failed_write.load(Ordering::SeqCst) {
+                                return Err("clipboard unavailable".into());
+                            }
+                            *write.lock().unwrap() = Some((w, h, bytes.to_vec()));
+                            Ok(())
+                        })),
+                        clipboard_get_image: Some(Box::new(move || {
+                            if failed_read.load(Ordering::SeqCst) { Err("clipboard unavailable".into()) } else { Ok(read.lock().unwrap().clone()) }
+                        })),
+                        ..Default::default()
+                    };
+                    let mut app = PhotocraftApp::new(Session::new(), services);
+                    app.run("file.new", serde_json::json!({"width": 8, "height": 8})).unwrap();
+                    if imported {
+                        *os.lock().unwrap() = Some((2, 2, [255u8, 0, 0, 255].repeat(4)));
+                        assert!(app.import_os_clipboard().unwrap());
+                    } else {
+                        app.run("edit.fill", serde_json::json!({"color": "#ff0000"})).unwrap();
+                        app.run("edit.copy", serde_json::json!({})).unwrap();
+                    }
+                    let old_signature = app.os_clip_sig;
+                    assert!(old_signature.is_some() && !app.clip_unmirrored);
+                    app.run("file.new", serde_json::json!({"width": 8, "height": 8})).unwrap();
+                    app.run("edit.fill", serde_json::json!({"color": "#0000ff"})).unwrap();
+                    write_fails.store(true, Ordering::SeqCst);
+                    app.session.edit_prefs(|prefs| prefs.general.export_clipboard = !disable_export);
+                    app.run(copy_id, serde_json::json!({})).unwrap();
+                    let copied = app.session.clipboard.clone().unwrap();
+                    assert!(app.clip_unmirrored && !app.clip_external);
+                    assert_eq!(app.os_clip_sig, old_signature);
+                    assert_eq!(copied.surface.rgba(0, 0), [0.0, 0.0, 1.0, 1.0]);
+                    // An old successful export/import must not block the newer internal copy.
+                    read_fails.store(true, Ordering::SeqCst);
+                    app.run("edit.pasteSpecial.pasteInPlace", serde_json::json!({})).unwrap();
+                    assert_eq!(app.os_clip_sig, old_signature);
+                    assert!(app.clip_unmirrored && !app.clip_external);
+                    read_fails.store(false, Ordering::SeqCst);
+                    assert!(!app.import_os_clipboard().unwrap(), "unchanged old OS image must not overwrite the newer copy");
+                    assert_eq!(app.session.clipboard.as_ref().unwrap().surface.rgba(0, 0), copied.surface.rgba(0, 0));
+                    *os.lock().unwrap() = None;
+                    assert!(!app.import_os_clipboard().unwrap(), "empty OS clipboard must not discard an unexported copy");
+                    assert!(app.os_clip_sig.is_none() && app.clip_unmirrored);
+                    assert_eq!(app.session.clipboard.as_ref().unwrap().surface.rgba(0, 0), copied.surface.rgba(0, 0));
+                    // A different external image supersedes the internal copy and disables fallback.
+                    *os.lock().unwrap() = Some((3, 2, [0u8, 255, 0, 255].repeat(6)));
+                    assert!(app.import_os_clipboard().unwrap());
+                    assert!(app.clip_external && !app.clip_unmirrored);
+                    let clip = app.session.clipboard.as_ref().unwrap();
+                    assert_eq!((clip.bounds.width(), clip.bounds.height()), (3, 2));
+                    read_fails.store(true, Ordering::SeqCst);
+                    assert!(app.run("edit.paste", serde_json::json!({})).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn failed_clipboard_reads_do_not_paste_an_external_or_missing_copy() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for external in [true, false] {
+            let unavailable = Arc::new(AtomicBool::new(false));
+            let failed = unavailable.clone();
+            let services = Services {
+                clipboard_get_image: Some(Box::new(move || {
+                    if failed.load(Ordering::SeqCst) { Err("clipboard unavailable".into()) } else { Ok(Some((3, 2, [255u8, 0, 0, 255].repeat(6)))) }
+                })),
+                ..Default::default()
+            };
+            let mut app = PhotocraftApp::new(Session::new(), services);
+            app.run("file.new", serde_json::json!({"width": 80, "height": 60})).unwrap();
+            if external {
+                assert!(app.import_os_clipboard().unwrap());
+            }
+            let signature = app.os_clip_sig;
+            let before = app.session.active().unwrap().doc.walk().len();
+            unavailable.store(true, Ordering::SeqCst);
+            for id in ["edit.paste", "edit.pasteSpecial.pasteInPlace", "file.newFromClipboard"] {
+                let result = crate::menus::invoke(&mut app, &egui::Context::default(), id, serde_json::json!({}));
+                assert_eq!(result.unwrap_err(), "clipboard unavailable", "{id}");
+                assert!(app.ui.status_error);
+                assert_eq!(app.session.documents().len(), 1);
+                assert_eq!(app.session.active().unwrap().doc.walk().len(), before);
+                assert_eq!(app.os_clip_sig, signature);
+                assert_eq!(app.session.clipboard.is_some(), external);
+                assert_eq!(app.clip_external, external);
+            }
+        }
+    }
+
     /// An app whose OS clipboard is `os`, counting every read in `reads`.
     fn app_with_os_clipboard(os: &OsClip, reads: &Arc<std::sync::atomic::AtomicUsize>) -> PhotocraftApp {
         let (b, n) = (os.clone(), reads.clone());
         let get = move || {
             n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            b.lock().unwrap().clone()
+            Ok(b.lock().unwrap().clone())
         };
         let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
         app.session.execute("file.new", serde_json::json!({"width": 64, "height": 64})).unwrap();
@@ -3041,7 +3343,7 @@ mod clipboard_tests {
         let (b, n) = (os.clone(), Arc::clone(&reads));
         let get = move || {
             n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            b.lock().unwrap().clone()
+            Ok(b.lock().unwrap().clone())
         };
         let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
         let ctx = egui::Context::default();
@@ -3091,7 +3393,7 @@ mod clipboard_tests {
             PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
             let get = move || {
                 n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                b.lock().unwrap().clone()
+                Ok(b.lock().unwrap().clone())
             };
             let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
             app.session.execute("file.new", serde_json::json!({"width": 64, "height": 64})).unwrap();

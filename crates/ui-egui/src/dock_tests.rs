@@ -1148,3 +1148,24 @@ fn brush_settings_window_is_closed_on_restart_but_can_be_reopened() {
     apply(&mut workspace, &saved);
     assert!(workspace.ui.panels.brush_settings, "switching workspaces still restores their saved layout");
 }
+
+/// Layers panel options live in the preferences on their own (like Photoshop's Panel Options),
+/// so a workspace layout neither saves nor restores them.
+#[test]
+fn workspace_layouts_leave_the_layers_panel_options_alone() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.ui.layers_panel_options.show_filters = false;
+    crate::layers_panel_ui::persist_options(&mut app);
+    let stored = app.session.prefs().dialogs.get("ui.layersPanelOptions").cloned();
+    assert!(stored.is_some(), "the options are saved in the preferences");
+
+    let mut saved = snapshot(&app);
+    assert!(saved.get("layersPanelOptions").is_none(), "a layout does not carry the options");
+
+    // A layout saved by an earlier build still has the key; it must not win over the preferences.
+    saved["layersPanelOptions"] = json!({"showFilters": true, "thumbnailSize": "large"});
+    apply(&mut app, &saved);
+    assert!(!app.ui.layers_panel_options.show_filters);
+    assert_ne!(app.ui.layers_panel_options.thumbnail_size, crate::state::LayerThumbnailSize::Large);
+    assert_eq!(app.session.prefs().dialogs.get("ui.layersPanelOptions").cloned(), stored);
+}

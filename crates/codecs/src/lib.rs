@@ -128,6 +128,12 @@ pub fn probe_size(bytes: &[u8]) -> Result<(u32, u32), CodecError> {
     Ok(if (5..=8).contains(&o) { (h, w) } else { (w, h) })
 }
 
+/// The colour table of a GIF's first frame (its Local Color Table, else the Global one) and the
+/// entry its Graphic Control Extension makes transparent, read without decoding pixels.
+pub fn gif_palette(bytes: &[u8]) -> Option<(Vec<[u8; 3]>, Option<u8>)> {
+    crate::codecs::gif_palette::palette(bytes)
+}
+
 /// Returns the embedded colour table for an indexed BMP, if it has one.
 pub fn bmp_palette(bytes: &[u8]) -> Result<Option<Vec<[u8; 3]>>, CodecError> {
     via_image::bmp_palette(bytes)

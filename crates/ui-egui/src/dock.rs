@@ -609,6 +609,10 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui, shown: &[Group], mut bod
                 crate::swatches_ui::panel_menu(app, ui);
                 ui.separator();
             }
+            if tabs.get(sel) == Some(&"History") {
+                crate::history_menu_ui::panel_menu(app, ui);
+                ui.separator();
+            }
             if tabs.get(sel) == Some(&"Brush Settings") {
                 crate::brush_panel::panel_menu(app, ui);
                 ui.separator();
@@ -634,6 +638,12 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui, shown: &[Group], mut bod
                 ui.close();
             }
             ui.separator();
+            if ui.button(tl!("Close")).clicked() {
+                if let Some(&tab) = indices.get(sel) {
+                    actions.push(Action::CloseTab(g, tab));
+                }
+                ui.close();
+            }
             if ui.button(tl!("Close Tab Group")).clicked() {
                 actions.push(Action::Close(g));
                 ui.close();

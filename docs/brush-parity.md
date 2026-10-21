@@ -1,6 +1,6 @@
 # Brush and painting parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (live Mixer Brush and same-frame live painting, #5196; dragged preset tip preview; Hue Jitter amount track; Brush Settings minimum fields follow their Control; checkbox-only rows and non-destructive Smoothing switch; shaped-tip cursor follows the view; Color Replacement is a live toolbar tool; no brush-feel estimate changed) · **Target:** Adobe Photoshop 2026
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (live Mixer Brush and same-frame brush rendering (#5196), dialog overlay ordering and current automatic Load/Clean retained; dragged preset tip preview; Hue Jitter amount track; Brush Settings minimum fields follow their Control; checkbox-only rows and non-destructive Smoothing switch; shaped-tip cursor follows the view; Color Replacement is a live toolbar tool; no brush-feel estimate changed; 2026-10-11: Pattern Stamp and Background Eraser draw live, TOOL-213-7) · **Target:** Adobe Photoshop 2026
 
 Painting is where Photoshop users notice differences first, so it gets its own checklist: the
 brush engine (`crates/paint/src/brush.rs`), the Brush Settings UI
@@ -61,7 +61,7 @@ tablets against Photoshop side by side.
 | Latency: dab to screen within a frame | partial | #5196 removes the extra frame caused by preparing live brush textures before pointer input; raw-input regression covers press and move. Full latency budgets P13/P16/P33 remain over (scorecard); tablet feel remains open; big-brush lag #2619, #1994; cursor lag #2566, #1343 |
 | No hitch at mouse-up on a long stroke | not measurable | P32 needs a frame harness |
 | Live stroke for Brush and Eraser | done | |
-| Live stroke for every brush-based retouch tool | partial | Mixer Brush now joins the existing live tools (#5196), with incremental dabs, Sample All Layers, and preview pixels reused on release. Spot Healing, Background Eraser and Pattern Stamp remain; TOOL-213-7. |
+| Live stroke for every brush-based retouch tool | partial | Mixer Brush now joins the other live tools (#5196), including Pattern Stamp and Background Eraser. Spot Healing and Remove show the area they process and compute on release as in Photoshop. Tablet feel and latency budgets remain open. |
 | No OS arrow cursor over the canvas with a pen | partial | TOOL-213-14 |
 
 ## Gestures and cursors
@@ -91,7 +91,7 @@ tablets against Photoshop side by side.
 | Tool | Status | Notes |
 |---|---|---|
 | Brush, Pencil (aliased, Auto Erase), Eraser (Brush/Pencil/Block) | done | Pencil 1 px quality #2139 |
-| Mixer Brush (Wet, Load, Mix, Flow, Sample All Layers) | partial | Real live mixing preview and reuse on release (#5196), tested against command pixels and carried paint at 8/16/32-bit in RGB/Gray/CMYK/Lab. Pigment mixing and broader Photoshop fidelity remain open (#2247). |
+| Mixer Brush (Wet, Load, Mix, Flow, Sample All Layers, Current Brush Load, automatic Load and Clean) | partial | Real live mixing preview and reuse on release (#5196), tested against command pixels and carried paint at 8/16/32-bit in RGB/Gray/CMYK/Lab. Automatic Load/Clean and explicit load persist across strokes. Pigment mixing and broader Photoshop fidelity remain open (#2247). |
 | Clone Stamp (opacity, flow, aligned, sample, overlay) | partial | Clone Source W/H link and Alt target cursor (TOOL-213-8) |
 | Pattern Stamp (aligned, impressionist) | done | |
 | History Brush | done | Art History Brush missing |
@@ -116,8 +116,9 @@ tablets against Photoshop side by side.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-20 | minor | #5196: Mixer Brush previews its actual blend while drawing and reuses pixels on release; live brush canvas images include the current frame's input. No global brush-feel estimate or performance budget changed. |
+| 2026-10-21 | minor | #5196: Mixer Brush previews its actual blend while drawing and reuses pixels on release; live brush canvas images include the current frame's input. No global brush-feel estimate or performance budget changed. |
 | 2026-10-13 | minor | Stale "missing tool" row corrected against main: Color Replacement (`paint.colorReplacement`) is a live toolbar tool; no brush-feel estimate changed |
+| 2026-10-11 | minor | Pattern Stamp and Background Eraser draw live (#3754); live retouch row now partial (Mixer Brush left) |
 | 2026-10-10 | major | First version, from a source audit and the open issues |
 | 2026-10-11 | minor | `~` held with the Brush or Pencil erases with that tool's brush, and Clear joins their Mode menus (#3439) |
 | 2026-10-12 | minor | Five Brush Settings switch rows toggle without selecting a properties pane; Smoothing has a default-on switch and retains its settings while disabled (#4283). No brush-feel estimate changed. |

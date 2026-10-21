@@ -167,3 +167,44 @@ fn live_mixer_24mp_benchmark() {
         eprintln!("24 MP {label}: median {:.3} ms, p95 {:.3} ms", values[values.len() / 2], values[(values.len() * 95 / 100).min(values.len() - 1)]);
     }
 }
+
+/// Refreshing the live path must retain the automatic Load/Clean settings added upstream.
+#[test]
+fn live_mixer_keeps_automatic_load_clean_and_explicit_paint_across_strokes() {
+    for depth in [8, 16, 32] {
+        for clean in [false, true] {
+            for load in [false, true] {
+                let setup = || {
+                    let mut s = session(depth, "rgb");
+                    s.execute("tools.setColors", json!({"foreground":"#ef2000"})).unwrap();
+                    s.execute("tools.setBrush", json!({"brush":{"mixer":{"cleanAfterStroke":clean,"loadAfterStroke":load}}})).unwrap();
+                    s.execute("brush.mixer.load", json!({"color":"#00ff00"})).unwrap();
+                    s
+                };
+                let mut live_session = setup();
+                let mut oracle = setup();
+                let mut p = full_params(false);
+                p.as_object_mut().unwrap().remove("cleanAfterStroke");
+                for _ in 0..2 {
+                    let live = LiveMixer::begin(&live_session, &p).unwrap();
+                    live_session.offer_live_mixer(live).unwrap();
+                    assert_eq!(live_session.execute("paint.mixerBrush", p.clone()).unwrap()["fromLive"], true);
+                    oracle.execute("paint.mixerBrush", p.clone()).unwrap();
+                    assert_eq!(pixels(&live_session.active().unwrap().doc), pixels(&oracle.active().unwrap().doc));
+                    assert_eq!(live_session.tools.mixer, oracle.tools.mixer);
+                    let state = &live_session.tools.mixer;
+                    assert_eq!(state.color, Some(live_session.tools.foreground));
+                    if load {
+                        assert_eq!(state.reservoir, Some(live_session.tools.foreground));
+                        assert_eq!(state.amount, 1.0);
+                    } else if clean {
+                        assert_eq!((state.reservoir, state.pickup, state.amount), (None, None, 0.0));
+                    } else {
+                        assert_eq!(state.reservoir, Some([0.0, 1.0, 0.0, 1.0]));
+                        assert!(state.amount < 1.0);
+                    }
+                }
+            }
+        }
+    }
+}

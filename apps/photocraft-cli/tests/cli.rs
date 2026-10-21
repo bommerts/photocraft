@@ -163,19 +163,29 @@ fn info_and_convert_report_decode_warnings() {
         gif.extend_from_slice(b"\x2C\0\0\0\0\x01\0\x01\0\0\x02\x02\x44\x01\0");
     }
     gif.push(0x3B);
+    // A GIF opens in Indexed Color (#7886), so `convert` to PNG also notes the palette PNG it
+    // writes, after the decode warning.
     let cases = [
-        ("whole.jpg", &jpeg[..], None),
-        ("half.jpg", &jpeg[..jpeg.len() / 2], Some("JPEG data ends early (the file is truncated or damaged); part of the image is missing")),
-        ("anim.gif", &gif[..], Some("only the first of 3 frames was imported")),
+        ("whole.jpg", &jpeg[..], None, None),
+        ("half.jpg", &jpeg[..jpeg.len() / 2], Some("JPEG data ends early (the file is truncated or damaged); part of the image is missing"), None),
+        ("anim.gif", &gif[..], Some("only the first of 3 frames was imported"), Some("written as an 8-bit palette PNG (2 colours)")),
     ];
-    for (name, bytes, warning) in cases {
+    for (name, bytes, warning, export) in cases {
         let file = d.join(name);
         std::fs::write(&file, bytes).unwrap();
         let (out, _) = ok(bin().arg("info").arg(&file).arg("--compact"));
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["warnings"], json!(warning.into_iter().collect::<Vec<_>>()), "{name}");
         let (_, err) = ok(bin().arg("convert").arg(&file).arg(d.join(format!("{name}.png"))));
-        assert_eq!(err.trim(), warning.map(|w| format!("warning: {w}")).unwrap_or_default(), "{name}");
+        let expected: Vec<String> = warning.into_iter().chain(export).map(|w| format!("warning: {w}")).collect();
+        assert_eq!(
+            err.trim(),
+            expected.join(
+                "
+"
+            ),
+            "{name}"
+        );
     }
     std::fs::remove_dir_all(d).unwrap();
 }
