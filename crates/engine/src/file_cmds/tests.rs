@@ -65,6 +65,33 @@ fn camera_raw_opens_as_16_bit_with_notes() {
     assert!(open_bytes_as(&mut s, "bad.dng", &bad, None, None).is_err());
 }
 
+/// #5799: Batch with Format "Same" over a folder of camera raws saved nothing (every output was
+/// a raw PhotoCraft can't write). Raws are saved as PSD; other inputs keep their format.
+#[test]
+fn batch_same_format_saves_camera_raws_as_psd() {
+    use photocraft_raw::testgen::{DngSpec, mosaic, scene};
+    let dir = tmp("batch-same-raw");
+    let (w, h) = (24, 16);
+    std::fs::write(join(&dir, "IMG_0001.dng"), DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 65535)).build()).unwrap();
+    png(&dir, "b.png", 8, 8, "#ff0000");
+    // Also with a file naming template, which picks the output extension separately.
+    for (out, naming) in [("out", None), ("named", Some("{name}_{serial}"))] {
+        let out = join(&dir, out);
+        let mut p = json!({"steps": [["image.adjustments.invert", {}]], "input": dir, "output": out, "format": "same"});
+        if let Some(naming) = naming {
+            p["naming"] = json!(naming);
+        }
+        let r = Session::new().execute("file.automate.batch", p).unwrap();
+        assert!(r["errors"].as_array().unwrap().is_empty(), "{naming:?}: {r}");
+        let mut files: Vec<String> = r["files"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().replace('\\', "/")).collect();
+        files.sort();
+        assert_eq!(files.len(), 2, "{r}");
+        assert!(files[0].contains("/IMG_0001") && files[0].ends_with(".psd") && files[1].contains("/b") && files[1].ends_with(".png"), "{files:?}");
+        let psd = photocraft_io::import("IMG_0001.psd", &std::fs::read(&files[0]).unwrap()).unwrap().document;
+        assert_eq!((psd.size.width, psd.size.height), (w as u32, h as u32));
+    }
+}
+
 #[test]
 fn revert_reloads_as_one_undoable_step() {
     let dir = tmp("revert");
@@ -624,6 +651,36 @@ fn fit_image_and_conditional_mode_change() {
     s.execute("file.automate.conditionalModeChange", json!({"to": "rgb"})).unwrap();
     assert_eq!(doc(&s).mode, ColorMode::Rgb);
     assert!(s.execute("file.automate.conditionalModeChange", json!({"to": "duotone"})).is_err());
+}
+
+#[test]
+fn fit_image_zero_or_negative_side_is_unconstrained() {
+    // Dialogs send 0 for an empty field: that side is not a limit, not a 1 px box.
+    let mut s = session(1000, 800, 8);
+    s.execute("file.automate.fitImage", json!({"width": 0, "height": 400})).unwrap();
+    assert_eq!((doc(&s).size.width, doc(&s).size.height), (500, 400));
+    s.execute("file.automate.fitImage", json!({"width": 250, "height": -5})).unwrap();
+    assert_eq!((doc(&s).size.width, doc(&s).size.height), (250, 200));
+    let r = s.execute("file.automate.fitImage", json!({"width": 0, "height": 0})).unwrap();
+    assert_eq!(r["changed"], false);
+    assert_eq!((doc(&s).size.width, doc(&s).size.height), (250, 200));
+}
+
+#[test]
+fn conditional_mode_change_single_gray_source_matches_grayscale() {
+    // A single `"from"` string is normalised like the array form: "gray" names Grayscale (#7042).
+    let mut s = session(4, 4, 8);
+    s.execute("image.mode.grayscale", json!({})).unwrap();
+    let r = s.execute("file.automate.conditionalModeChange", json!({"from": "rgb", "to": "rgb"})).unwrap();
+    assert_eq!(r["changed"], false);
+    assert_eq!(doc(&s).mode, ColorMode::Grayscale);
+    let r = s.execute("file.automate.conditionalModeChange", json!({"from": "gray", "to": "rgb"})).unwrap();
+    assert_eq!(r["changed"], true, "{r}");
+    assert_eq!(doc(&s).mode, ColorMode::Rgb);
+    s.execute("image.mode.grayscale", json!({})).unwrap();
+    let r = s.execute("file.automate.conditionalModeChange", json!({"from": "Gray", "to": "rgb"})).unwrap();
+    assert_eq!(r["changed"], true, "{r}");
+    assert_eq!(doc(&s).mode, ColorMode::Rgb);
 }
 
 #[test]

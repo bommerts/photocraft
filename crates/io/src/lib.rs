@@ -51,6 +51,7 @@ mod kra;
 pub mod linked;
 mod multichannel_map;
 mod ora;
+mod palette_map;
 pub use ora::losses as ora_losses;
 pub mod pattern_map;
 pub mod pdf;
