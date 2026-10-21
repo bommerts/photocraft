@@ -31,7 +31,7 @@ fn indexed_png_keeps_duplicate_palette_colors_opaque() {
     // choose the first red entry for both pixels, making the opaque one disappear on save.
     let palette = [[255, 0, 0], [0, 255, 0], [255, 0, 0], [0, 0, 255]];
     for transparent in [0, 2] {
-        let png = photocraft_codecs::encode_png_indexed(4, 1, &[0, 1, 2, 3], &palette, Some(transparent), None).unwrap();
+        let png = photocraft_codecs::encode_png_indexed(4, 1, &[0, 1, 2, 3], &palette, Some(transparent), None, None).unwrap();
         let d = photocraft_io::import("in.png", &png).unwrap().document;
         assert_eq!(d.mode, ColorMode::Indexed);
         let before = d.color_table.clone();
@@ -102,7 +102,7 @@ fn indexed_png_keeps_the_last_palette_index() {
     palette[0] = [255, 0, 0];
     palette[255] = [255, 0, 0];
     for transparent in [0, 255] {
-        let png = photocraft_codecs::encode_png_indexed(2, 1, &[0, 255], &palette, Some(transparent), None).unwrap();
+        let png = photocraft_codecs::encode_png_indexed(2, 1, &[0, 255], &palette, Some(transparent), None, None).unwrap();
         let d = photocraft_io::import("in.png", &png).unwrap().document;
         let r = photocraft_io::export(&d, "out.png", &Default::default()).unwrap();
         assert_eq!(photocraft_codecs::png_palette(&r.bytes).unwrap(), photocraft_codecs::png_palette(&png).unwrap());
@@ -112,7 +112,7 @@ fn indexed_png_keeps_the_last_palette_index() {
 
 #[test]
 fn indexed_png_keeps_a_single_transparent_entry() {
-    let png = photocraft_codecs::encode_png_indexed(2, 1, &[0, 0], &[[255, 0, 0]], Some(0), None).unwrap();
+    let png = photocraft_codecs::encode_png_indexed(2, 1, &[0, 0], &[[255, 0, 0]], Some(0), None, None).unwrap();
     let d = photocraft_io::import("in.png", &png).unwrap().document;
     let r = photocraft_io::export(&d, "out.png", &Default::default()).unwrap();
     assert_eq!(photocraft_codecs::png_palette(&r.bytes).unwrap(), photocraft_codecs::png_palette(&png).unwrap());
@@ -151,4 +151,61 @@ fn indexed_png_keeps_the_document_resolution() {
     assert_eq!(r.bytes[25], 3, "still a palette PNG");
     let back = photocraft_io::import("x.png", &r.bytes).unwrap().document;
     assert!((back.resolution_dpi - 300.0).abs() < 0.01, "{}", back.resolution_dpi);
+}
+
+#[test]
+fn indexed_bmp_is_palette_bmp() {
+    // The BMP export wrote an Indexed Color document as 24-bit RGB, so reopening it lost the mode (#3869 follow-up).
+    let mut d = doc(ColorMode::Indexed);
+    d.color_table = Some(ColorTable { colors: vec![[0, 0, 0], [255, 0, 0], [0, 255, 0]], transparent: None });
+    let r = photocraft_io::export(&d, "x.bmp", &Default::default()).unwrap();
+    assert_eq!(u16::from_le_bytes([r.bytes[28], r.bytes[29]]), 8, "8 bits per pixel");
+    assert!(r.warnings.iter().any(|w| w.contains("palette BMP")), "{:?}", r.warnings);
+    let back = photocraft_io::import("x.bmp", &r.bytes).unwrap().document;
+    assert_eq!(back.mode, ColorMode::Indexed);
+    assert_eq!(back.color_table.as_ref().map(|t| t.colors.clone()), Some(vec![[0, 0, 0], [255, 0, 0], [0, 255, 0]]));
+    let px = back.layers[0].surface().unwrap().rgba(1, 1);
+    assert_eq!(&px[..3], &[1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn indexed_bmp_warns_that_it_has_no_transparency() {
+    let mut d = doc(ColorMode::Indexed);
+    d.color_table = Some(ColorTable { colors: vec![[0, 0, 0], [255, 0, 0]], transparent: Some(0) });
+    let r = photocraft_io::export(&d, "x.bmp", &Default::default()).unwrap();
+    assert!(r.warnings.iter().any(|w| w.contains("no transparency")), "{:?}", r.warnings);
+}
+
+#[test]
+fn indexed_bmp_exports_when_its_only_palette_entry_is_marked_transparent() {
+    let mut d = doc(ColorMode::Indexed);
+    d.color_table = Some(ColorTable { colors: vec![[255, 0, 0]], transparent: Some(0) });
+
+    let r = photocraft_io::export(&d, "x.bmp", &Default::default()).unwrap();
+
+    assert_eq!(u16::from_le_bytes([r.bytes[28], r.bytes[29]]), 8, "8 bits per pixel");
+    let back = photocraft_io::import("x.bmp", &r.bytes).unwrap().document;
+    assert_eq!(&back.layers[0].surface().unwrap().rgba(1, 1)[..3], &[1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn indexed_bmp_matches_opaque_pixels_against_the_transparent_palette_entry() {
+    let mut d = doc(ColorMode::Indexed);
+    d.color_table = Some(ColorTable { colors: vec![[255, 0, 0], [0, 0, 255]], transparent: Some(0) });
+
+    let r = photocraft_io::export(&d, "x.bmp", &Default::default()).unwrap();
+
+    let back = photocraft_io::import("x.bmp", &r.bytes).unwrap().document;
+    assert_eq!(&back.layers[0].surface().unwrap().rgba(1, 1)[..3], &[1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn indexed_bmp_without_a_usable_table_falls_back_to_rgb() {
+    // No table (or one past 256 entries) keeps the old 24-bit path rather than failing the save.
+    for table in [None, Some(ColorTable { colors: vec![[0; 3]; 257], transparent: None })] {
+        let mut d = doc(ColorMode::Indexed);
+        d.color_table = table;
+        let r = photocraft_io::export(&d, "x.bmp", &Default::default()).unwrap();
+        assert_eq!(u16::from_le_bytes([r.bytes[28], r.bytes[29]]), 24);
+    }
 }

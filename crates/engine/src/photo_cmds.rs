@@ -402,10 +402,18 @@ pub(crate) fn seam_blend(warped: &[Surface], canvas: Rect, order: &[usize], seam
                 .collect()
         })
         .collect();
-    // Shift ROIs to canvas-relative coordinates for the blend.
-    let local: Vec<RoiImage> = rois.iter().map(|r| RoiImage { x0: r.x0 - canvas.x0, y0: r.y0 - canvas.y0, ..r.clone() }).collect();
+    // Shift ROIs to canvas-relative coordinates for the blend, and back after: a shifted copy
+    // would hold every source's pixels twice (#7758).
+    for r in &mut rois {
+        r.x0 -= canvas.x0;
+        r.y0 -= canvas.y0;
+    }
     let levels = if seamless { panorama::blend_levels(cw, chh).min(7) } else { 1 };
-    let (blend, cov) = panorama::multiband(cw, chh, &local, &weights, levels);
+    let (blend, cov) = panorama::multiband(cw, chh, &rois, &weights, levels);
+    for r in &mut rois {
+        r.x0 += canvas.x0;
+        r.y0 += canvas.y0;
+    }
     let cc = fmt.mode.color_channels();
     let nch = fmt.channels();
     let mut composite = Surface::new(fmt);
@@ -799,7 +807,11 @@ fn merge_to_hdr(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut surf = Surface::new(fmt);
     surf.write_region(area, &data);
-    doc.layers.push(Layer::new("Background", LayerContent::Raster(surf)));
+    // The merged result is opaque: a real Background, as Crop and Straighten makes.
+    let mut bg = Layer::new("Background", LayerContent::Raster(surf));
+    bg.locks.transparency = true;
+    bg.locks.position = true;
+    doc.layers.push(bg);
     let idx = s.add_document(doc, None);
     let ev0 = exposures[order[0]];
     Ok(json!({
@@ -1086,6 +1098,7 @@ mod tests {
         assert!((ev[1] - 2.0).abs() < 1e-6 && (ev[2] - 4.0).abs() < 1e-6, "{ev:?}");
         let d = &s.active().unwrap().doc;
         assert_eq!(d.depth, SampleType::F32);
+        assert!(d.is_background(d.layers[0].id), "the merged layer is a real (locked) Background");
         let l = d.layers[0].surface().unwrap();
         // Linear output: ratios across the ramp follow the radiance.
         let (a, b) = (l.rgba(20, 30)[1] as f64, l.rgba(80, 30)[1] as f64);

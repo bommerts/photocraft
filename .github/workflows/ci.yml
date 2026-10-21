@@ -427,7 +427,9 @@ jobs:
         run: cargo install cargo-fuzz --locked
       - name: Fuzz
         working-directory: crates/${{ matrix.target.crate }}
-        run: cargo fuzz run ${{ matrix.target.name }} ${{ matrix.target.args }} -- -max_total_time=${{ inputs.fuzz_seconds }}
+        env:
+          FUZZ_SECONDS: ${{ inputs.fuzz_seconds }}
+        run: cargo fuzz run ${{ matrix.target.name }} ${{ matrix.target.args }} -- -max_total_time="$FUZZ_SECONDS"
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4

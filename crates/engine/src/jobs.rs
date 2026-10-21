@@ -212,6 +212,10 @@ struct Running {
     label: String,
     params: Value,
     journal: bool,
+    /// The recording (`ActionState::take`) running when the job started, if any (set by
+    /// `dispatch`, once recording resumes). Only that recording gets the job's step: one started
+    /// later must not pick up an edit made before it.
+    recorded_by: Option<u64>,
     doc: Option<DocId>,
     /// The document as the job saw it: applying fails if it was edited meanwhile.
     snapshot: Option<Weak<Document>>,
@@ -219,10 +223,34 @@ struct Running {
     started_ms: f64,
     coalesce: Option<String>,
     color_restrict: Option<usize>,
+    /// The document's layer selection when the job started: applying targets it, not whatever
+    /// got selected meanwhile (a Type click does that without editing the document, #7366).
+    layers: Option<LayerSelection>,
     rx: std::sync::mpsc::Receiver<Result<Payload>>,
     apply: Option<Apply>,
     #[cfg(not(target_arch = "wasm32"))]
     handle: Option<std::thread::JoinHandle<()>>,
+}
+
+/// A document's active layer, selected layers and selection anchor.
+#[derive(Clone, PartialEq)]
+struct LayerSelection {
+    active: Option<LayerId>,
+    selected: Vec<LayerId>,
+    anchor: Option<LayerId>,
+}
+
+impl LayerSelection {
+    fn of(st: &crate::DocState) -> Self {
+        Self { active: st.active_layer, selected: st.selected_layers.clone(), anchor: st.layer_anchor }
+    }
+
+    fn set(self, st: &mut crate::DocState) {
+        st.active_layer = self.active;
+        st.selected_layers = self.selected;
+        st.layer_anchor = self.anchor;
+        crate::channel_cmds::fix_view(st);
+    }
 }
 
 impl Running {
@@ -333,10 +361,10 @@ pub fn run<T: Send + 'static>(
     if s.jobs.pending.is_some() {
         return Err(EngineError::Other(format!("`{label}` started a second background job in one command")));
     }
-    let (doc, snapshot) = match (lock_document, s.active()) {
-        (true, Some(st)) => (Some(st.doc.id), Some(Arc::downgrade(&st.doc))),
+    let (doc, snapshot, layers) = match (lock_document, s.active()) {
+        (true, Some(st)) => (Some(st.doc.id), Some(Arc::downgrade(&st.doc)), Some(LayerSelection::of(st))),
         (true, None) => return Err(EngineError::NoDocument),
-        (false, _) => (None, None),
+        (false, _) => (None, None, None),
     };
     let ctx = JobCtx::new();
     let (tx, rx) = std::sync::mpsc::channel::<Result<Payload>>();
@@ -376,12 +404,14 @@ pub fn run<T: Send + 'static>(
         label: label.to_string(),
         params: Value::Null,
         journal: true,
+        recorded_by: None,
         doc,
         snapshot,
         ctx,
         started_ms: now_ms(),
         coalesce: s.coalesce_request.clone(),
         color_restrict: s.color_restrict,
+        layers,
         rx,
         apply: Some(erased),
         #[cfg(not(target_arch = "wasm32"))]
@@ -507,6 +537,15 @@ impl Session {
                     })?;
                 ctx.progress(0.95, "Preparing layers");
                 warm_layer_bounds(&imported.document, || ctx.check())?;
+                // Type layers need the shared text engine, whose first use waits for the
+                // installed-font scan started at launch (minutes on some machines). Wait here,
+                // so the shell's missing-font check after the open finds it ready instead of
+                // freezing the window (#7332).
+                if crate::type_extra_cmds::has_type_layers(&imported.document) {
+                    ctx.progress(0.97, "Loading fonts");
+                    let _ = photocraft_text::shared();
+                    ctx.check()?;
+                }
                 Ok(imported)
             },
             move |s, mut r: photocraft_io::ImportResult| {
@@ -723,6 +762,26 @@ impl Session {
         }
         // Pixel commands follow the Channels panel target unless the caller names one.
         let run_params = self.admit(id, spec, &params)?;
+        // This UI-only disclosure preference applies to both `execute` and `start`:
+        // desktop UI normally calls `start`, even for synchronous Layer Style commands.
+        // The layer the command will change, named as the command accepts it (id or name), else the
+        // active one. `layer.layerStyle.clear` needs no case: it leaves no effects, so nothing expands.
+        // Transfer Effects changes its destination (`to`), not the layer it takes the effects from.
+        let new_fx_target = if id.starts_with("layer.layerStyle.") {
+            let target = if id == "layer.layerStyle.transferEffects" {
+                crate::commands::layer_param(self, &json!({"layer": params.get("to").cloned().unwrap_or(Value::Null)}))
+            } else {
+                crate::commands::layer_param(self, &params)
+            }
+            .ok();
+            self.active().and_then(|st| {
+                let target = target?;
+                (st.doc.layer(target)?.effects.items.is_empty()).then_some((st.doc.id, target))
+            })
+        } else {
+            None
+        };
+        let expand_new_fx = crate::commands::layer_panel_option(self, "expandNewEffects", true);
         self.coalesce_request = params.get("coalesce").and_then(Value::as_str).map(str::to_string);
         self.color_restrict = crate::channel_cmds::color_restriction(self, id, &run_params);
         self.jobs.spawn = background;
@@ -732,6 +791,7 @@ impl Session {
         // action it plays (a script step) must not flush the steps it ran so far into the action
         // being recorded, nor move the recording mark past the entries it is about to replace.
         let recording = if spec.journal && crate::actions_cmds::replayable(id) { self.actions.recording.take() } else { None };
+        let before = self.active().map(|st| st.doc.clone());
         // Last-resort guard (AGENTS.md, Never crash): a command that panics anyway fails with an
         // error instead of taking the app down. `edit` only commits a document after its closure
         // returns, so the documents are unchanged.
@@ -754,14 +814,42 @@ impl Session {
                 job.command = id.to_string();
                 job.params = params;
                 job.journal = spec.journal;
+                job.recorded_by = self.actions.recording.map(|_| self.actions.take);
                 let jid = job.id;
                 self.jobs.running.push(job);
                 Ok(Started::Job(jid))
             }
             (Ok(v), None) => {
+                if let Some(before) = before {
+                    self.add_relayout_damage(&before);
+                }
+                if let Some((doc_id, layer_id)) = new_fx_target
+                    && let Some(st) = self.active_mut()
+                    && st.doc.id == doc_id
+                    && st.doc.layer(layer_id).is_some_and(|l| !l.effects.items.is_empty())
+                {
+                    if expand_new_fx {
+                        st.fx_collapsed.retain(|id| *id != layer_id);
+                    } else if !st.fx_collapsed.contains(&layer_id) {
+                        st.fx_collapsed.push(layer_id);
+                    }
+                }
                 self.after_command(id, params, spec.journal, Some(nested_from));
                 Ok(Started::Done(v))
             }
+        }
+    }
+
+    /// Grows the damage a command reported for the pixels it changed by what effects laid out
+    /// over a layer's frame repaint when it moved ([`photocraft_compose::relayout_damage`]): a
+    /// stroke on a layer with a Gradient Overlay reports the stroke, but the gradient is laid out
+    /// again over the whole grown layer (#4053). `before` is the active document before.
+    fn add_relayout_damage(&mut self, before: &Arc<Document>) {
+        let Some(st) = self.active_mut().filter(|st| st.doc.id == before.id && !Arc::ptr_eq(&st.doc, before)) else { return };
+        let Some(d) = st.last_damage.filter(|d| !d.is_empty()) else { return };
+        let extra = photocraft_compose::relayout_damage(before, &st.doc);
+        if !extra.is_empty() {
+            st.last_damage = Some(d.union(&extra));
         }
     }
 
@@ -799,8 +887,12 @@ impl Session {
             self.journal.truncate(from);
         }
         if !crate::brush_cmds::coalesce_journal(self, id, &params) {
-            let params =
-                if id == "layer.select" && self.actions.recording.is_some() { crate::layer_multi_cmds::recorded_selection(self, params) } else { params };
+            let params = match id {
+                _ if self.actions.recording.is_none() => params,
+                "layer.select" => crate::layer_multi_cmds::recorded_selection(self, params),
+                "layerComp.apply" => crate::comps_cmds::recorded_apply(self, params),
+                _ => params,
+            };
             self.journal.push((id.to_string(), params));
         }
     }
@@ -822,7 +914,13 @@ impl Session {
     }
 
     fn apply_job(&mut self, job: &Running, apply: Option<Apply>, payload: Payload) -> Result<Value> {
-        let Running { label, doc, snapshot, coalesce, color_restrict, command, params, journal, .. } = job;
+        let Running { label, doc, snapshot, coalesce, color_restrict, layers, command, params, journal, recorded_by, .. } = job;
+        // A recording started after the job (#7289) keeps what it has so far, and the job's step
+        // goes into the journal past its start, so that recording doesn't get it.
+        let foreign = self.actions.recording.is_some() && *recorded_by != Some(self.actions.take);
+        if foreign {
+            crate::actions_cmds::flush_recording(self)?;
+        }
         let prev_active = self.active;
         let target = match doc {
             Some(d) => {
@@ -836,6 +934,19 @@ impl Session {
                 Some(i)
             }
             None => None,
+        };
+        // Selecting a layer doesn't change the document, so the snapshot check above lets it
+        // through. Apply against the layers the job started on: the colour restriction and any
+        // `active`-based edit land on them (#7366). The user's selection is put back below.
+        let user_layers = match (target, layers) {
+            (Some(i), Some(started)) => self.docs.get_mut(i).and_then(|st| {
+                let now = LayerSelection::of(st);
+                (now != *started).then(|| {
+                    started.clone().set(st);
+                    now
+                })
+            }),
+            _ => None,
         };
         self.coalesce_request = coalesce.clone();
         self.color_restrict = *color_restrict;
@@ -858,6 +969,18 @@ impl Session {
         // to that document instead, when the user switched tabs mid-job.
         if r.is_ok() {
             self.after_command(command, params.clone(), *journal, Some(nested_from));
+            if foreign && let Some((start, _)) = self.actions.recording.as_mut() {
+                *start = self.journal.len();
+            }
+        }
+        // Give the user back the layers they selected while the job ran, unless the job chose a
+        // selection itself (a new layer, say) or one of their layers is gone.
+        if let (Some(started), Some(user), Some(st)) = (layers, user_layers, target.and_then(|i| self.docs.get_mut(i))) {
+            let kept = LayerSelection::of(st) == *started;
+            let exist = user.active.iter().chain(&user.selected).all(|id| st.doc.layer(*id).is_some());
+            if (r.is_err() || kept) && exist {
+                user.set(st);
+            }
         }
         // Keep the user's active document unless the job opened a new one.
         // This also restores the selection when the apply step returned an error.

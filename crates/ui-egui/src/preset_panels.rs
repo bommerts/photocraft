@@ -1002,6 +1002,7 @@ fn tool_id(t: Tool) -> String {
 
 /// Apply a tool preset: the engine sets the brush/colour, the shell switches tool and options.
 pub fn select_tool_preset(app: &mut PhotocraftApp, name: &str) {
+    let before_ratio = crate::crop_ui::preset_ratio(app);
     let Some(r) = run(app, "tool.presets.select", json!({"preset": name})) else { return };
     if let Some(tool) = r["tool"].as_str().and_then(Tool::from_name) {
         crate::tool_memory::select(app, tool);
@@ -1016,12 +1017,23 @@ pub fn select_tool_preset(app: &mut PhotocraftApp, name: &str) {
         let mut cur = serde_json::to_value(&app.ui.tool_options).unwrap_or_default();
         if let Some(c) = cur.as_object_mut() {
             for (k, v) in o {
-                c.insert(k.clone(), v.clone());
+                // An object option (`sample_all`, one per tool) takes only the entries the
+                // preset stored, so the other tools' keep theirs (#5524).
+                match (c.get_mut(k), v) {
+                    (Some(Value::Object(have)), Value::Object(set)) => have.extend(set.clone()),
+                    _ => {
+                        c.insert(k.clone(), v.clone());
+                    }
+                }
             }
         }
         if let Ok(opts) = serde_json::from_value(cur) {
             app.ui.tool_options = opts;
         }
+    }
+    // As the options bar does: a crop preset's ratio (or W x H) fits the frame at once.
+    if crate::crop_ui::preset_ratio(app) != before_ratio {
+        crate::crop_ui::apply_ratio(app);
     }
 }
 
@@ -1029,8 +1041,14 @@ pub fn select_tool_preset(app: &mut PhotocraftApp, name: &str) {
 /// preset later leaves the other tools' settings alone.
 fn new_tool_preset_params(app: &PhotocraftApp, tool: Tool) -> Value {
     let all = serde_json::to_value(&app.ui.tool_options).unwrap_or_default();
-    let own: serde_json::Map<String, Value> =
+    let mut own: serde_json::Map<String, Value> =
         crate::tool_reset::option_keys(tool).iter().filter_map(|k| Some(((*k).to_string(), all.get(*k)?.clone()))).collect();
+    // Sample All Layers is each tool's own (#5524): store `tool`'s alone.
+    if let Some(k) = crate::tool_reset::sample_all_key(tool)
+        && let Some(v) = all.get("sample_all").and_then(|m| m.get(&k))
+    {
+        own.insert("sample_all".into(), json!({ k: v }));
+    }
     json!({"name": tool.label(), "tool": tool_id(tool), "options": {"toolOptions": own}})
 }
 
@@ -1319,6 +1337,20 @@ mod tests {
         assert_eq!(Tool::from_name(&tool_id(Tool::CustomShape)), Some(Tool::CustomShape));
     }
 
+    /// A crop preset picked in Tool Presets fits the frame to its ratio at once, as the options
+    /// bar's dropdown does.
+    #[test]
+    fn a_crop_tool_preset_fits_the_frame_to_its_ratio() {
+        let (mut app, _) = app();
+        app.ui.tool = Tool::Crop;
+        crate::crop_ui::ensure_frame(&mut app);
+        assert_eq!(app.ui.crop_rect, Some([0.0, 0.0, 64.0, 48.0]));
+        app.run("tool.presets.new", json!({"name": "Square", "tool": "crop", "options": {"toolOptions": {"crop_ratio": "1:1"}}})).unwrap();
+        select_tool_preset(&mut app, "Square");
+        assert_eq!(app.ui.tool_options.crop_ratio, "1:1");
+        assert_eq!(app.ui.crop_rect, Some([8.0, 0.0, 56.0, 48.0]));
+    }
+
     /// #7356: a preset made with + keeps only its own tool's options, so choosing it doesn't
     /// reset the Crop tool's Delete Cropped Pixels or the Move tool's Auto-Select.
     #[test]
@@ -1339,6 +1371,23 @@ mod tests {
         assert_eq!(app.ui.tool_options.feather, 5.0);
         assert_eq!(app.ui.tool_options.crop_delete, !ToolOptions::default().crop_delete);
         assert_eq!(app.ui.tool_options.move_auto_select, !ToolOptions::default().move_auto_select);
+    }
+
+    /// #5524 with #7356: a Blur preset keeps Blur's Sample All Layers and leaves the Magic Wand's
+    /// alone, both when it is made and when it is chosen.
+    #[test]
+    fn new_tool_preset_stores_only_its_tools_sample_all_layers() {
+        let (mut app, _) = app();
+        app.ui.tool = Tool::Blur;
+        app.ui.tool_options.sample_all.blur = true;
+        let p = new_tool_preset_params(&app, Tool::Blur);
+        assert_eq!(p["options"]["toolOptions"]["sample_all"], json!({"blur": true}));
+        let name = app.run("tool.presets.new", p).unwrap()["name"].as_str().unwrap().to_string();
+        app.ui.tool_options.sample_all.blur = false;
+        app.ui.tool_options.sample_all.magic_wand = true;
+        select_tool_preset(&mut app, &name);
+        assert!(app.ui.tool_options.sample_all.blur);
+        assert!(app.ui.tool_options.sample_all.magic_wand, "the Magic Wand's Sample All Layers is not Blur's");
     }
 
     #[test]

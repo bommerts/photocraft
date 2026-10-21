@@ -121,6 +121,7 @@ enum Target {
     Property(String),
     Class,
     Offset(i32),
+    Index(u32),
     Other,
 }
 
@@ -131,6 +132,7 @@ fn target(r: &[ReferenceItem]) -> Target {
         Some(ReferenceItem::Property { key, .. }) => Target::Property(trimmed(key)),
         Some(ReferenceItem::Class(_)) => Target::Class,
         Some(ReferenceItem::Offset { offset, .. }) => Target::Offset(*offset),
+        Some(ReferenceItem::Index { index, .. }) => Target::Index(*index),
         _ => Target::Other,
     }
 }
@@ -389,6 +391,8 @@ enum Kind {
     Pct,
     Ang,
     Long,
+    /// An integer field whose value must survive conversion without rounding or saturation.
+    ExactLong,
     Dbl,
     Bool,
     /// An enumeration: its type id and the Photoshop ↔ PhotoCraft value pairs.
@@ -402,11 +406,13 @@ enum Kind {
 /// One descriptor key ↔ one command param.
 struct F(&'static str, &'static str, Kind);
 
+/// Import mapped descriptor fields, leaving absent values to command defaults.
+/// Return `None` when a present enum, blend mode or colour cannot be represented.
 fn fields_from(d: &Descriptor, fields: &[F]) -> Option<Map<String, Value>> {
     let mut m = Map::new();
     for F(key, param, kind) in fields {
         let v = match kind {
-            Kind::Px | Kind::Pct | Kind::Ang | Kind::Long | Kind::Dbl => get_num(d, key).map(Value::from),
+            Kind::Px | Kind::Pct | Kind::Ang | Kind::Long | Kind::ExactLong | Kind::Dbl => get_num(d, key).map(Value::from),
             Kind::Bool => get_bool(d, key).map(Value::from),
             Kind::Enum(_, table) => match get_enum(d, key) {
                 Some(e) => Some(Value::from(lookup(table, &e)?)),
@@ -428,6 +434,8 @@ fn fields_from(d: &Descriptor, fields: &[F]) -> Option<Map<String, Value>> {
     Some(m)
 }
 
+/// Export supplied mapped params, omitting absent values to preserve event defaults.
+/// Return `None` for unsupported values; `ExactLong` also rejects rounding or saturation.
 fn fields_to(p: &Value, fields: &[F], mut d: Descriptor) -> Option<Descriptor> {
     for F(key, param, kind) in fields {
         let Some(v) = p.get(param) else { continue };
@@ -436,6 +444,14 @@ fn fields_to(p: &Value, fields: &[F], mut d: Descriptor) -> Option<Descriptor> {
             Kind::Pct => pct(v.as_f64()?),
             Kind::Ang => ang(v.as_f64()?),
             Kind::Long => long(v.as_f64()?),
+            Kind::ExactLong => {
+                let number = v.as_f64()?;
+                let integer = number as i32;
+                if f64::from(integer) != number {
+                    return None;
+                }
+                D::Integer(integer)
+            }
             Kind::Dbl => D::Double(v.as_f64()?),
             Kind::Bool => D::Boolean(v.as_bool()?),
             Kind::Enum(ty, table) => enm(ty, lookup_back(table, v.as_str()?)?),
@@ -612,19 +628,22 @@ fn hue_entry(p: &Value, range: Option<(usize, &Value)>) -> Option<Descriptor> {
     Some(e)
 }
 
+// Exporters leave out a param the step doesn't set only where Photoshop plays the missing key
+// as PhotoCraft's default (checked against Photoshop: Fill opacity and mode, Crop delete,
+// Selective Color method, Channel Mixer monochrome, Paint Bucket contiguous; Gradient Map
+// reverse and dither, which Photoshop itself leaves out when off). Elsewhere they
+// write PhotoCraft's default, as Photoshop plays a missing key differently (Color Balance
+// preserve luminosity off, Canvas Size anchored top left, Apply Image Normal) or refuses the
+// step (Paint Bucket without a tolerance).
 fn hue_sat_to(p: &Value) -> Option<Descriptor> {
+    let d = desc("HStr").with("presetKind", enm("presetKindType", "presetKindCustom")).with("Clrz", D::Boolean(jbool(p, "colorize").unwrap_or(false)));
     let mut entries = vec![D::Descriptor(hue_entry(p, None)?)];
     for (i, name) in HUE_RANGES.iter().enumerate() {
         if let Some(r) = p.get(*name).filter(|v| v.is_object()) {
             entries.push(D::Descriptor(hue_entry(r, Some((i, r)))?));
         }
     }
-    Some(
-        desc("HStr")
-            .with("presetKind", enm("presetKindType", "presetKindCustom"))
-            .with("Clrz", D::Boolean(jbool(p, "colorize").unwrap_or(false)))
-            .with("Adjs", D::List(entries)),
-    )
+    Some(d.with("Adjs", D::List(entries)))
 }
 
 fn triple(d: &Descriptor, k: &str) -> Option<Value> {
@@ -694,12 +713,17 @@ fn channel_mixer_to(p: &Value) -> Option<Descriptor> {
             d = d.with(key, D::Descriptor(desc("ChMx").with("Rd  ", pct(v(0))).with("Grn ", pct(v(1))).with("Bl  ", pct(v(2))).with("Cnst", pct(v(3)))));
         }
     }
-    Some(d.with("Mnch", D::Boolean(jbool(p, "monochrome").unwrap_or(false))))
+    if let Some(m) = jbool(p, "monochrome") {
+        d = d.with("Mnch", D::Boolean(m));
+    }
+    Some(d)
 }
 
+/// Photoshop's `Clrs` colour-range enumeration. Yellows is `Ylws` (`Yllw` is the yellow ink
+/// key); earlier PhotoCraft builds wrote `Yllw`, which import still reads (#6745).
 const SELECTIVE_RANGES: &[(&str, &str)] = &[
     ("Rds", "reds"),
-    ("Yllw", "yellows"),
+    ("Ylws", "yellows"),
     ("Grns", "greens"),
     ("Cyns", "cyans"),
     ("Bls", "blues"),
@@ -716,7 +740,8 @@ fn selective_from(d: &Descriptor) -> Option<Value> {
     }
     for e in get_list(d, "ClrC").unwrap_or(&[]) {
         let D::Descriptor(e) = e else { return None };
-        let name = lookup(SELECTIVE_RANGES, &get_enum(e, "Clrs")?)?;
+        let range = get_enum(e, "Clrs")?;
+        let name = lookup(SELECTIVE_RANGES, if range == "Yllw" { "Ylws" } else { &range })?;
         let v = |k: &str| get_num(e, k).unwrap_or(0.0);
         out.insert(name.into(), json!([v("Cyn "), v("Mgnt"), v("Yllw"), v("Blck")]));
     }
@@ -724,21 +749,46 @@ fn selective_from(d: &Descriptor) -> Option<Value> {
 }
 
 fn selective_to(p: &Value) -> Option<Descriptor> {
-    let mut list = Vec::new();
-    for (ps, name) in SELECTIVE_RANGES {
+    // Each range, as the command reads it (`adjust_cmds::selective_from_params`): the array form
+    // `"reds": [c, m, y, k]` first, then the scalar form, which names one range in `"colors"` and
+    // gives the channels it changes. Writing only the arrays dropped the scalar form's values, and
+    // the step exported as an adjustment that changes nothing (#7672).
+    let mut rows: Vec<Option<[f64; 4]>> = vec![None; SELECTIVE_RANGES.len()];
+    for (row, (_, name)) in rows.iter_mut().zip(SELECTIVE_RANGES) {
         if let Some(a) = p.get(*name).and_then(Value::as_array) {
             let v = |i: usize| a.get(i).and_then(Value::as_f64).unwrap_or(0.0);
+            *row = Some([v(0), v(1), v(2), v(3)]);
+        }
+    }
+    if let Some(named) = jstr(p, "colors") {
+        let i = SELECTIVE_RANGES.iter().position(|(_, name)| *name == named)?;
+        let row = rows.get_mut(i)?;
+        let mut v = row.unwrap_or([0.0; 4]);
+        for (slot, key) in v.iter_mut().zip(["cyan", "magenta", "yellow", "black"]) {
+            // A channel that is given but is not a number is an error in the command
+            // (`adjust_cmds::selective_from_params`), so a step carrying one cannot be written
+            // either: ignoring it would export a different adjustment than the one recorded.
+            // `null` counts as absent there, and so here.
+            match p.get(key) {
+                None | Some(Value::Null) => {}
+                Some(_) => *slot = jnum(p, key)?,
+            }
+        }
+        *row = Some(v);
+    }
+    let mut list = Vec::new();
+    for (row, (ps, _)) in rows.iter().zip(SELECTIVE_RANGES) {
+        if let Some(v) = row {
             list.push(D::Descriptor(
-                desc("ClrC").with("Clrs", enm("Clrs", ps)).with("Cyn ", pct(v(0))).with("Mgnt", pct(v(1))).with("Yllw", pct(v(2))).with("Blck", pct(v(3))),
+                desc("ClrC").with("Clrs", enm("Clrs", ps)).with("Cyn ", pct(v[0])).with("Mgnt", pct(v[1])).with("Yllw", pct(v[2])).with("Blck", pct(v[3])),
             ));
         }
     }
-    Some(
-        desc("SlcC")
-            .with("presetKind", enm("presetKindType", "presetKindCustom"))
-            .with("Mthd", enm("CrcM", if jstr(p, "method") == Some("absolute") { "Absl" } else { "Rltv" }))
-            .with("ClrC", D::List(list)),
-    )
+    let mut d = desc("SlcC").with("presetKind", enm("presetKindType", "presetKindCustom"));
+    if let Some(m) = jstr(p, "method") {
+        d = d.with("Mthd", enm("CrcM", if m == "absolute" { "Absl" } else { "Rltv" }));
+    }
+    Some(d.with("ClrC", D::List(list)))
 }
 
 /// Gradient Map: the gradient's colour stops at 0..4096 → `stops: [[0..1, "#rrggbb"], …]`.
@@ -787,12 +837,14 @@ fn gradient_map_to(p: &Value) -> Option<Descriptor> {
         .with("Intr", D::Double(4096.0))
         .with("Clrs", D::List(stops?))
         .with("Trns", transparency);
-    Some(
-        desc("GdMp")
-            .with("Grad", D::Descriptor(grad))
-            .with("Rvrs", D::Boolean(jbool(p, "reverse").unwrap_or(false)))
-            .with("Dthr", D::Boolean(jbool(p, "dither").unwrap_or(false))),
-    )
+    let mut d = desc("GdMp").with("Grad", D::Descriptor(grad));
+    if let Some(r) = jbool(p, "reverse") {
+        d = d.with("Rvrs", D::Boolean(r));
+    }
+    if let Some(dd) = jbool(p, "dither") {
+        d = d.with("Dthr", D::Boolean(dd));
+    }
+    Some(d)
 }
 
 /// An adjustment: its Photoshop class (also the direct event's code), the command suffix (`image.adjustments.<suffix>`, `layer.newAdjustmentLayer.<suffix>`), and
@@ -821,7 +873,7 @@ const ADJUSTMENTS: &[Adjustment] = &[
     Adjustment { class: "ClrB", suffix: "colorBalance", from: color_balance_from, to: color_balance_to },
     adj_fields!("Vbrn", "vibrance", &[F("vibrance", "vibrance", Kind::Long), F("Strt", "saturation", Kind::Long)]),
     adj_fields!("Exps", "exposure", &[F("Exps", "exposure", Kind::Dbl), F("Ofst", "offset", Kind::Dbl), F("gammaCorrection", "gamma", Kind::Dbl)]),
-    adj_fields!("PhtF", "photoFilter", &[F("Clr ", "color", Kind::Color), F("Dnst", "density", Kind::Long), F("PrsL", "preserveLuminosity", Kind::Bool)]),
+    Adjustment { class: "PhtF", suffix: "photoFilter", from: |d| fields_from(d, PHOTO_FILTER_FIELDS).map(Value::Object), to: photo_filter_to },
     adj_fields!("BlnW", "blackWhite", BW),
     Adjustment { class: "ChnM", suffix: "channelMixer", from: channel_mixer_from, to: channel_mixer_to },
     Adjustment { class: "SlcC", suffix: "selectiveColor", from: selective_from, to: selective_to },
@@ -830,6 +882,29 @@ const ADJUSTMENTS: &[Adjustment] = &[
 
 fn adjustment_by_class(c: &str) -> Option<&'static Adjustment> {
     ADJUSTMENTS.iter().find(|a| a.class.trim_end() == c.trim_end())
+}
+
+const PHOTO_FILTER_FIELDS: &[F] = &[F("Clr ", "color", Kind::Color), F("Dnst", "density", Kind::Long), F("PrsL", "preserveLuminosity", Kind::Bool)];
+
+/// A `PhtF` step whose params carry a `filter` preset without an explicit `color`: the descriptor
+/// form is colour-only (Photoshop stores no preset key — the `phfl` notes in `crates/io` conclude
+/// the same from its CS2 oracles), so the resolved colour must be written, or re-imported playback
+/// falls back to the default warming filter. With both present, the explicit colour wins, as when
+/// running the command. An unknown preset id keeps the old export (no colour) instead of failing.
+fn photo_filter_to(p: &Value) -> Option<Descriptor> {
+    let mut p = p.clone();
+    if p.get("color").is_none() {
+        let hex = p.get("filter").and_then(Value::as_str).and_then(preset_color);
+        if let (Some(hex), Some(o)) = (hex, p.as_object_mut()) {
+            o.insert("color".into(), hex.into());
+        }
+    }
+    fields_to(&p, PHOTO_FILTER_FIELDS, desc("PhtF"))
+}
+
+/// The preset id's resolved `#rrggbb`, or none (no id given, or an unknown one).
+fn preset_color(id: &str) -> Option<String> {
+    crate::adjust_params::PHOTO_FILTERS.iter().find(|f| f.0 == id).map(|(_, _, rgb)| format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]))
 }
 
 fn adjustment_by_suffix(suffix: &str) -> Option<&'static Adjustment> {
@@ -872,6 +947,11 @@ struct Event {
 
 macro_rules! ev {
     ($code:literal, $name:literal, $label:literal, $id:literal, $fields:expr) => {
+        ev!($code, $name, $label, $id, $fields, unless | _ | false)
+    };
+    // `unless`: params the descriptor can't carry, so such a step isn't exported (it would replay
+    // differently) rather than losing them.
+    ($code:literal, $name:literal, $label:literal, $id:literal, $fields:expr, unless $skip:expr) => {
         Event {
             code: $code,
             name: $name,
@@ -881,9 +961,16 @@ macro_rules! ev {
                 Some(m) => step($id, Value::Object(m)),
                 None => Mapped::Unsupported { harmless: false },
             },
-            to: |_, p| if pixel_target(p) { fields_to(p, $fields, desc("null")) } else { None },
+            to: |_, p| if pixel_target(p) && !($skip)(p) { fields_to(p, $fields, desc("null")) } else { None },
         }
     };
+}
+
+/// Minimum / Maximum with Preserve: Roundness. The descriptor here maps the radius only, and
+/// Photoshop's encoding of the shape isn't verified, so such a step is not exported: it would
+/// replay as the default Squareness (#7233).
+fn preserves_roundness(p: &Value) -> bool {
+    p.get("preserve").and_then(Value::as_str) == Some("roundness")
 }
 
 /// Whether `p` edits the layer's pixels: no `"target"` or `"target":"pixels"`. Photoshop's
@@ -922,7 +1009,10 @@ const STROKE_LOCATION: &[(&str, &str)] = &[("Insd", "inside"), ("Cntr", "center"
 const INTENT: &[(&str, &str)] = &[("Img ", "perceptual"), ("Clrm", "relative"), ("Grp ", "saturation"), ("AbsC", "absolute")];
 const PROFILES: &[(&str, &str)] =
     &[("sRGB IEC61966-2.1", "srgb"), ("Display P3", "display-p3"), ("Adobe RGB (1998)", "adobe-rgb-compat"), ("ProPhoto RGB", "prophoto-compat")];
-const SMART_BLUR_QUALITY: &[(&str, &str)] = &[("Hgh ", "high"), ("Mdm ", "medium"), ("Low ", "low")];
+/// Smart Blur quality. Photoshop's codes come first, so they are what an export writes (measured in
+/// Photoshop: `Hgh `/`Mdm `/`Low ` play back as its fallback, low quality). The old codes after
+/// them still read, for actions PhotoCraft wrote before.
+const SMART_BLUR_QUALITY: &[(&str, &str)] = &[("SBQL", "low"), ("SBQM", "medium"), ("SBQH", "high"), ("Hgh ", "high"), ("Mdm ", "medium"), ("Low ", "low")];
 const SMART_BLUR_MODE: &[(&str, &str)] = &[("SBMN", "normal"), ("SBME", "edgeOnly"), ("SBMO", "overlayEdge")];
 const RADIAL_METHOD: &[(&str, &str)] = &[("Spn ", "spin"), ("Zm  ", "zoom")];
 const RADIAL_QUALITY: &[(&str, &str)] = &[("Drft", "draft"), ("Gd  ", "good"), ("Bst ", "best")];
@@ -989,6 +1079,14 @@ fn pattern_desc(p: &Value) -> Option<Descriptor> {
     Some(t)
 }
 
+/// Layer › Layer Mask: the `UsrM` value of an Add Layer Mask `Mk` ↔ its command.
+const MASK_USING: &[(&str, &str)] = &[
+    ("RvlA", "layer.layerMask.revealAll"),
+    ("HdAl", "layer.layerMask.hideAll"),
+    ("RvlS", "layer.layerMask.revealSelection"),
+    ("HdSl", "layer.layerMask.hideSelection"),
+];
+
 fn make_from(d: &Descriptor) -> Mapped {
     // Duplicate layer/group into a new document: `Mk` with a document class, a layer
     // `Usng`, an optional `Nm` (the new document's name) and an optional `LyrN`
@@ -1010,13 +1108,25 @@ fn make_from(d: &Descriptor) -> Mapped {
         }
         return step("layer.duplicate", Value::Object(p));
     }
+    // Add Layer Mask: a `Chnl` class made at the mask channel, `Usng` what it reveals.
+    if let Some(D::Class(c)) = d.get("Nw  ")
+        && trimmed(&c.class_id) == "Chnl"
+    {
+        // The target layer's mask only: a further item (a `Lyr` by name…) puts it on another layer.
+        let at_mask = get_ref(d, "At  ")
+            .is_some_and(|r| r.len() == 1 && ref_class(r).as_deref() == Some("Chnl") && matches!(target(r), Target::Ordinal(o) if o == "Msk"));
+        return match get_enum(d, "Usng").and_then(|u| lookup(MASK_USING, &u)) {
+            Some(id) if at_mask => none(id),
+            _ => Mapped::Unsupported { harmless: false },
+        };
+    }
     if let Some(nw) = get_obj(d, "Nw  ") {
         // Layer via Copy / Cut (`Usng` = the selection), or a new document.
         if get_enum(d, "Usng").as_deref() == Some("Slct") {
             let id = if get_bool(d, "Cpy ") == Some(true) { "layer.new.layerViaCopy" } else { "layer.new.layerViaCut" };
             let mut v = vec![(id, json!({}))];
             if let Some(n) = get_text(nw, "Nm  ") {
-                v.push(("layer.renameLayer", json!({"name": n})));
+                v.push(("layer.setProps", json!({"name": n})));
             }
             return steps(v);
         }
@@ -1159,6 +1269,14 @@ fn make_to(id: &str, p: &Value) -> Option<Descriptor> {
             }
             d
         }
+        "layer.layerMask.revealAll" | "layer.layerMask.hideAll" | "layer.layerMask.revealSelection" | "layer.layerMask.hideSelection" => {
+            // Photoshop adds the mask to the target layer only.
+            if p.get("layer").is_some() {
+                return None;
+            }
+            let at = D::Reference(vec![ReferenceItem::Enumerated { class: class("Chnl"), type_id: code("Chnl"), value: code("Msk ") }]);
+            desc("null").with("Nw  ", D::Class(class("Chnl"))).with("At  ", at).with("Usng", enm("UsrM", lookup_back(MASK_USING, id)?))
+        }
         "file.newFromClipboard" => desc("null").with("Nw  ", D::Descriptor(desc("Dcmn").with("preset", text("Clipboard")))),
         "file.new" => {
             let mut n = desc("Dcmn");
@@ -1269,6 +1387,11 @@ fn set_from(d: &Descriptor) -> Mapped {
             }
             steps(v)
         }
+        // The toolbox colours.
+        (Some("Clr"), Target::Property(p)) if p == "FrgC" || p == "BckC" => match get_obj(d, "T   ").and_then(color_hex) {
+            Some(hex) => step("tools.setColors", json!({(if p == "FrgC" { "foreground" } else { "background" }): hex})),
+            None => unsupported,
+        },
         (Some("Lyr"), _) => {
             let Some(mut p) = layer_target(r) else { return unsupported };
             let Some(t) = get_obj(d, "T   ") else { return unsupported };
@@ -1310,7 +1433,15 @@ fn set_from(d: &Descriptor) -> Mapped {
         (Some("AdjL"), Target::Ordinal(o)) if o == "Trgt" => {
             match get_obj(d, "T   ").and_then(|t| adjustment_by_class(&trimmed(&t.class_id)).map(|a| (a, t))) {
                 Some((a, t)) => match (a.from)(t) {
-                    Some(p) => step("layer.setAdjustment", p),
+                    // `kind` names the adjustment so Save Actions can write the class back.
+                    // Not on an empty set (Photoshop's "reset to default"): params with any key
+                    // merge, none reset.
+                    Some(mut p) => {
+                        if let Some(o) = p.as_object_mut().filter(|o| !o.is_empty()) {
+                            o.insert("kind".into(), json!(a.suffix));
+                        }
+                        step("layer.setAdjustment", p)
+                    }
                     None => unsupported,
                 },
                 None => unsupported,
@@ -1349,6 +1480,21 @@ fn set_to(id: &str, p: &Value) -> Option<Descriptor> {
                 return None;
             }
             desc("null").with("null", quick_mask_ref())
+        }
+        "tools.setColors" => {
+            // One colour per Photoshop step: a step that sets both (or any other key) doesn't
+            // export rather than lose one.
+            if p.as_object().is_some_and(|o| o.keys().any(|k| k != "foreground" && k != "background")) {
+                return None;
+            }
+            let (key, hex) = match (jstr(p, "foreground"), jstr(p, "background")) {
+                (Some(f), None) => ("FrgC", f),
+                (None, Some(b)) => ("BckC", b),
+                _ => return None,
+            };
+            desc("null")
+                .with("null", D::Reference(vec![ReferenceItem::Property { class: class("Clr "), key: code(key) }]))
+                .with("T   ", D::Descriptor(color_desc(hex)?))
         }
         "select.rect" => {
             let (x, y, w, h) = (jnum(p, "x")?, jnum(p, "y")?, jnum(p, "width")?, jnum(p, "height")?);
@@ -1442,9 +1588,17 @@ fn select_from(d: &Descriptor) -> Mapped {
             }
         }
         (Some(c), Target::Class) if is_tool_class(c) => Mapped::Unsupported { harmless: true },
+        // A menu item chosen while recording (`Mn`): the View menu's zoom items replay.
+        (Some("Mn"), Target::Ordinal(item)) => match lookup(MENU_ITEMS, &item) {
+            Some(id) => none(id),
+            None => Mapped::Unsupported { harmless: false },
+        },
         _ => Mapped::Unsupported { harmless: false },
     }
 }
+
+/// `MnIt` menu-item codes ↔ the shell's view commands.
+const MENU_ITEMS: &[(&str, &str)] = &[("FtOn", "view.fitOnScreen"), ("ActP", "view.actualPixels"), ("ZmIn", "view.zoomIn"), ("ZmOt", "view.zoomOut")];
 
 fn select_to(id: &str, p: &Value) -> Option<Descriptor> {
     let ord = |o: &str| D::Reference(vec![ReferenceItem::Enumerated { class: class("Lyr "), type_id: code("Ordn"), value: code(o) }]);
@@ -1476,7 +1630,10 @@ fn select_to(id: &str, p: &Value) -> Option<Descriptor> {
         "layer.addBelowToSelection" => desc("null").with("null", ord("Bckw")).with("selectionModifier", enm("selectionModifierType", "addToSelection")),
         "layer.selectTop" => desc("null").with("null", ord("Frnt")),
         "layer.selectBottom" => desc("null").with("null", ord("Back")),
-        _ => return None,
+        _ => {
+            let item = lookup_back(MENU_ITEMS, id)?;
+            desc("null").with("null", D::Reference(vec![ReferenceItem::Enumerated { class: class("Mn  "), type_id: code("MnIt"), value: code(item) }]))
+        }
     })
 }
 
@@ -1597,7 +1754,9 @@ fn close_to(_: &str, p: &Value) -> Option<Descriptor> {
 /// width/height in percent, angle). A layer moved only becomes `layer.translate`; anything
 /// else is `edit.transform`'s relative form; the selection's frame is `select.transformSelection`.
 fn transform_from(d: &Descriptor) -> Mapped {
-    let Some(r) = get_ref(d, "null") else { return Mapped::Unsupported { harmless: false } };
+    // No reference (a smart object replaced in place, `replaceLayer`) means the target layer.
+    let target_layer = [ReferenceItem::Enumerated { class: class("Lyr "), type_id: code("Ordn"), value: code("Trgt") }];
+    let r: &[ReferenceItem] = get_ref(d, "null").unwrap_or(&target_layer);
     let unsupported = Mapped::Unsupported { harmless: false };
     let mut p = Map::new();
     if let Some(o) = get_obj(d, "Ofst") {
@@ -1858,6 +2017,16 @@ fn visibility_to(_: &str, p: &Value) -> Option<Descriptor> {
 
 fn move_from(d: &Descriptor) -> Mapped {
     let Some(r) = get_ref(d, "null") else { return Mapped::Unsupported { harmless: false } };
+    // The selection outline nudged.
+    if ref_class(r).as_deref() == Some("Chnl") && matches!(target(r), Target::Property(p) if p == "fsel") {
+        return match get_obj(d, "T   ") {
+            Some(t) if matches!(t.get("Hrzn"), Some(D::UnitFloat { unit: PX, .. })) => match (get_num(t, "Hrzn"), get_num(t, "Vrtc")) {
+                (Some(dx), Some(dy)) => step("select.transformSelection", json!({"dx": dx.round(), "dy": dy.round()})),
+                _ => Mapped::Unsupported { harmless: false },
+            },
+            _ => Mapped::Unsupported { harmless: false },
+        };
+    }
     if ref_class(r).as_deref() != Some("Lyr") {
         return Mapped::Unsupported { harmless: false };
     }
@@ -1893,6 +2062,8 @@ fn move_from(d: &Descriptor) -> Mapped {
                 Target::Ordinal(o) if o == "Prvs" => "layer.arrange.sendBackward",
                 Target::Offset(1) => "layer.arrange.bringForward",
                 Target::Offset(-1) => "layer.arrange.sendBackward",
+                // Index 0 is the bottom of the stack.
+                Target::Index(0) => "layer.arrange.sendToBack",
                 _ => return Mapped::Unsupported { harmless: false },
             };
             step(id, Value::Object(p))
@@ -1981,6 +2152,10 @@ fn play_from(d: &Descriptor) -> Mapped {
 
 fn play_to(_: &str, p: &Value) -> Option<Descriptor> {
     let name = jstr(p, "action")?;
+    // The Play Action descriptor written here carries no starting step, so a call from a later step is not a whole call.
+    if p.get("from").is_some_and(|v| !v.is_null() && v.as_f64() != Some(0.0)) {
+        return None;
+    }
     let mut items = vec![ReferenceItem::Name { class: class("Actn"), name: UnicodeString::new_nul(name) }];
     if let Some(set) = jstr(p, "set") {
         items.push(ReferenceItem::Name { class: class("ASet"), name: UnicodeString::new_nul(set) });
@@ -2064,7 +2239,9 @@ fn fill_to(id: &str, p: &Value) -> Option<Descriptor> {
         if let Some(o) = jnum(p, "opacity") {
             d = d.with("Opct", pct(o));
         }
-        d = d.with("Cntg", D::Boolean(jbool(p, "contiguous").unwrap_or(true)));
+        if let Some(c) = jbool(p, "contiguous") {
+            d = d.with("Cntg", D::Boolean(c));
+        }
         if let Some(m) = jbool(p, "sampleAllLayers") {
             d = d.with("Mrgd", D::Boolean(m));
         }
@@ -2075,7 +2252,12 @@ fn fill_to(id: &str, p: &Value) -> Option<Descriptor> {
     if contents == "color" {
         d = d.with("Clr ", D::Descriptor(color_desc(jstr(p, "color")?)?));
     }
-    d = d.with("Opct", pct(jnum(p, "opacity").unwrap_or(100.0))).with("Md  ", enm("BlnM", blend_ps(jstr(p, "mode").unwrap_or("Normal"))?));
+    if let Some(o) = jnum(p, "opacity") {
+        d = d.with("Opct", pct(o));
+    }
+    if let Some(m) = jstr(p, "mode") {
+        d = d.with("Md  ", enm("BlnM", blend_ps(m)?));
+    }
     if let Some(t) = jbool(p, "preserveTransparency") {
         d = d.with("PrsT", D::Boolean(t));
     }
@@ -2105,6 +2287,16 @@ fn bucket_color(v: Option<&Value>) -> Option<Option<Descriptor>> {
     Some(Some(desc("RGBC").with("Rd  ", D::Double(rgba[0] * 255.0)).with("Grn ", D::Double(rgba[1] * 255.0)).with("Bl  ", D::Double(rgba[2] * 255.0))))
 }
 
+/// Preserve the command's effective integer width instead of rounding its input again.
+fn stroke_to(_: &str, p: &Value) -> Option<Descriptor> {
+    if !pixel_target(p) {
+        return None;
+    }
+    let mut params = if p.is_null() { Map::new() } else { p.as_object()?.clone() };
+    params.insert("width".into(), Value::from(crate::extra_cmds::stroke_width(p)));
+    fields_to(&Value::Object(params), STROKE, desc("null"))
+}
+
 const STROKE: &[F] = &[
     F("Wdth", "width", Kind::Long),
     F("Lctn", "location", Kind::Enum("StrL", STROKE_LOCATION)),
@@ -2132,7 +2324,11 @@ fn rotate_from(d: &Descriptor) -> Mapped {
     } else if targets_layer(d) {
         return Mapped::Unsupported { harmless: false };
     } else {
-        return step("image.rotation.arbitrary", json!({"angle": angle.abs(), "direction": if angle < 0.0 { "ccw" } else { "cw" }}));
+        let mut p = json!({"angle": angle.abs(), "direction": if angle < 0.0 { "ccw" } else { "cw" }});
+        if let Some(i) = get_enum(d, "Intr").and_then(|i| lookup(INTERPOLATION, &i)).filter(|i| matches!(*i, "bicubic" | "bilinear" | "nearest")) {
+            p["interpolation"] = i.into();
+        }
+        return step("image.rotation.arbitrary", p);
     };
     none(if targets_layer(d) { layer } else { doc })
 }
@@ -2152,7 +2348,20 @@ fn rotate_to(id: &str, p: &Value) -> Option<Descriptor> {
     if layer {
         d = d.with("null", target_ref("Lyr "));
     }
-    Some(d.with("Angl", ang(angle)))
+    d = d.with("Angl", ang(angle));
+    if id == "image.rotation.arbitrary"
+        && let Some(i) = p.get("interpolation")
+    {
+        // The command resamples with nearest, bilinear or bicubic; any other value can't be
+        // carried faithfully, so refuse rather than replay with a different interpolation.
+        let i = match i.as_str()? {
+            "nearestNeighbor" => "nearest",
+            i @ ("bicubic" | "bilinear" | "nearest") => i,
+            _ => return None,
+        };
+        d = d.with("Intr", enm("Intp", lookup_back(INTERPOLATION, i)?));
+    }
+    Some(d)
 }
 
 fn flip_from(d: &Descriptor) -> Mapped {
@@ -2372,6 +2581,52 @@ fn image_size_from(d: &Descriptor) -> Mapped {
     step("image.imageSize", Value::Object(p))
 }
 
+/// Shadows/Highlights (`adaptCorrect`, #5830): the shadow and highlight tones are `shadowMode`
+/// and `highlightMode` objects (amount and width in %, radius in px), then the black and white
+/// clips (%), midtone contrast (`center`) and colour correction. Each key is read as its char ID
+/// or its string ID, whichever the file used; absent keys keep the command's defaults.
+const SHADOWS_HIGHLIGHTS_TONES: [(&str, &str, &str); 2] = [("sdwM", "shadowMode", "shadow"), ("hglM", "highlightMode", "highlight")];
+const SHADOWS_HIGHLIGHTS_TONE: [(&str, &str, &str); 3] = [("Amnt", "amount", "Amount"), ("Wdth", "width", "Tone"), ("Rds ", "radius", "Radius")];
+const SHADOWS_HIGHLIGHTS: [(&str, &str, &str); 4] =
+    [("BlcC", "blackClip", "blackClip"), ("WhtC", "whiteClip", "whiteClip"), ("Cntr", "center", "midtone"), ("ClrC", "colorCorrection", "color")];
+
+fn shadows_highlights_from(d: &Descriptor) -> Mapped {
+    let mut m = Map::new();
+    for (code, name, prefix) in SHADOWS_HIGHLIGHTS_TONES {
+        let Some(t) = get_obj(d, code).or_else(|| get_obj(d, name)) else { continue };
+        for (code, name, suffix) in SHADOWS_HIGHLIGHTS_TONE {
+            if let Some(v) = get_num(t, code).or_else(|| get_num(t, name)) {
+                m.insert(format!("{prefix}{suffix}"), Value::from(v));
+            }
+        }
+    }
+    for (code, name, param) in SHADOWS_HIGHLIGHTS {
+        if let Some(v) = get_num(d, code).or_else(|| get_num(d, name)) {
+            m.insert(param.into(), Value::from(v));
+        }
+    }
+    step("image.adjustments.shadowsHighlights", Value::Object(m))
+}
+
+fn shadows_highlights_to(_: &str, p: &Value) -> Option<Descriptor> {
+    let mut d = desc("null");
+    for (_, name, prefix) in SHADOWS_HIGHLIGHTS_TONES {
+        let mut t = desc("adaptCorrectTones");
+        for (_, key, suffix) in SHADOWS_HIGHLIGHTS_TONE {
+            if let Some(v) = jnum(p, &format!("{prefix}{suffix}")) {
+                t = t.with(key, if suffix == "Radius" { long(v) } else { pct(v) });
+            }
+        }
+        d = d.with(name, D::Descriptor(t));
+    }
+    for (_, key, param) in SHADOWS_HIGHLIGHTS {
+        if let Some(v) = jnum(p, param) {
+            d = d.with(key, if matches!(param, "midtone" | "color") { long(v) } else { D::Double(v) });
+        }
+    }
+    Some(d)
+}
+
 fn image_size_to(_: &str, p: &Value) -> Option<Descriptor> {
     let mut d = desc("null");
     if let Some(pc) = jnum(p, "percent") {
@@ -2395,7 +2650,13 @@ fn image_size_to(_: &str, p: &Value) -> Option<Descriptor> {
 fn crop_from(d: &Descriptor) -> Mapped {
     let mut p = Map::new();
     if let Some(t) = get_obj(d, "To  ") {
-        let (Some(top), Some(left), Some(bottom), Some(right)) = (get_num(t, "Top "), get_num(t, "Left"), get_num(t, "Btom"), get_num(t, "Rght")) else {
+        // Pixels only, like Canvas Size: a side in percent or points needs the document's size
+        // or resolution and must not be played as pixels.
+        let side = |k: &str| match t.get(k) {
+            Some(D::UnitFloat { unit: PX, value }) if value.is_finite() => Some(*value),
+            _ => None,
+        };
+        let (Some(top), Some(left), Some(bottom), Some(right)) = (side("Top "), side("Left"), side("Btom"), side("Rght")) else {
             return Mapped::Unsupported { harmless: false };
         };
         p.insert("x".into(), left.round().into());
@@ -2420,7 +2681,10 @@ fn crop_to(_: &str, p: &Value) -> Option<Descriptor> {
     if let Some(a) = jnum(p, "angle") {
         d = d.with("Angl", ang(a));
     }
-    Some(d.with("Dlt ", D::Boolean(jbool(p, "deleteCroppedPixels").unwrap_or(true))))
+    if let Some(del) = jbool(p, "deleteCroppedPixels") {
+        d = d.with("Dlt ", D::Boolean(del));
+    }
+    Some(d)
 }
 
 fn stop_from(d: &Descriptor) -> Mapped {
@@ -2594,6 +2858,141 @@ fn gallery_to(id: &str, p: &Value) -> Option<Descriptor> {
     fields_to(p, fields, desc("null").with("GEfk", enm("GEft", code)))
 }
 
+/// Select and Mask as Photoshop CC 2015.5 and later record it (`smartBrushWorkspace`); the
+/// older Refine Edge event is [`REFINE_EDGE`], which is also what Select and Mask exports as.
+const SMART_BRUSH: &[F] = &[
+    F("smartBrushRadius", "radius", Kind::Px),
+    F("smartBrushUseSmartRadius", "smartRadius", Kind::Bool),
+    F("smartBrushSmooth", "smooth", Kind::Long),
+    F("smartBrushFeather", "feather", Kind::Px),
+    F("smartBrushContrast", "contrast", Kind::Pct),
+    F("smartBrushShiftEdge", "shiftEdge", Kind::Pct),
+    F("smartBrushDecontaminate", "decontaminate", Kind::Bool),
+    F("smartBrushDeconAmount", "amount", Kind::Pct),
+    F("refineEdgeOutput", "output", Kind::Enum("refineEdgeOutput", REFINE_OUTPUT)),
+    F("sampleAllLayers", "sampleAllLayers", Kind::Bool),
+];
+
+/// Select › Color Range's `Clrs` presets ↔ `select.colorRange`'s `select`.
+const COLOR_RANGE: &[(&str, &str)] = &[
+    ("Rds", "reds"),
+    ("Ylws", "yellows"),
+    ("Grns", "greens"),
+    ("Cyns", "cyans"),
+    ("Bls", "blues"),
+    ("Mgnt", "magentas"),
+    ("Hghl", "highlights"),
+    ("Mdtn", "midtones"),
+    ("Shdw", "shadows"),
+    ("OtOf", "outOfGamut"),
+    ("skinTone", "skinTones"),
+];
+
+/// The Color Range keys the converter reads (or that don't change a preset's result:
+/// `colorModel` is the model of sampled colours).
+const COLOR_RANGE_KEYS: &[&str] = &[
+    "Clrs",
+    "Fzns",
+    "Invr",
+    "colorModel",
+    "shadowsFuzziness",
+    "shadowsUpperLimit",
+    "midtonesFuzziness",
+    "midtonesLowerLimit",
+    "midtonesUpperLimit",
+    "highlightsFuzziness",
+    "highlightsLowerLimit",
+];
+
+/// Color Range (`ClrR`) with a preset. Sampled Colors records Lab minimum and maximum colours,
+/// which `select.colorRange` (eyedropper points on the image) can't reproduce, and an unknown
+/// key (Detect Faces, Localized Color Clusters…) could change the result: both stay
+/// unsupported.
+fn color_range_from(d: &Descriptor) -> Mapped {
+    let unsupported = Mapped::Unsupported { harmless: false };
+    if d.items.iter().any(|(k, _)| !COLOR_RANGE_KEYS.contains(&trimmed(k).as_str())) {
+        return unsupported;
+    }
+    let Some(preset) = get_enum(d, "Clrs").and_then(|c| lookup(COLOR_RANGE, &c)) else { return unsupported };
+    let mut p = Map::new();
+    p.insert("select".into(), preset.into());
+    let key = |suffix: &str| get_num(d, &format!("{preset}{suffix}"));
+    match preset {
+        "skinTones" => {
+            if let Some(f) = get_num(d, "Fzns") {
+                p.insert("fuzziness".into(), f.into());
+            }
+        }
+        "shadows" | "midtones" | "highlights" => {
+            if let Some(f) = key("Fuzziness") {
+                p.insert("fuzziness".into(), f.into());
+            }
+            let range = match (preset, key("LowerLimit"), key("UpperLimit")) {
+                ("shadows", _, hi) => hi.map(Value::from),
+                ("highlights", lo, _) => lo.map(Value::from),
+                (_, Some(lo), Some(hi)) => Some(json!([lo, hi])),
+                (_, None, None) => None,
+                _ => return unsupported,
+            };
+            if let Some(r) = range {
+                p.insert("tonalRange".into(), r);
+            }
+        }
+        _ => {}
+    }
+    if get_bool(d, "Invr") == Some(true) {
+        p.insert("invert".into(), true.into());
+    }
+    step("select.colorRange", Value::Object(p))
+}
+
+fn color_range_to(_: &str, p: &Value) -> Option<Descriptor> {
+    let preset = jstr(p, "select")?;
+    if p.as_object()?.keys().any(|k| !matches!(k.as_str(), "select" | "fuzziness" | "tonalRange" | "invert")) {
+        return None;
+    }
+    let mut d = desc("null").with("Clrs", enm("Clrs", lookup_back(COLOR_RANGE, preset)?));
+    let tonal = matches!(preset, "shadows" | "midtones" | "highlights");
+    if let Some(f) = jnum(p, "fuzziness") {
+        match preset {
+            "skinTones" => d = d.with("Fzns", long(f)),
+            _ if tonal => d = d.with(&format!("{preset}Fuzziness"), long(f)),
+            _ => {}
+        }
+    }
+    if let Some(r) = p.get("tonalRange") {
+        match preset {
+            "shadows" => d = d.with("shadowsUpperLimit", long(r.as_f64()?)),
+            "highlights" => d = d.with("highlightsLowerLimit", long(r.as_f64()?)),
+            "midtones" => {
+                let a = r.as_array()?;
+                d = d.with("midtonesLowerLimit", long(a.first()?.as_f64()?)).with("midtonesUpperLimit", long(a.get(1)?.as_f64()?));
+            }
+            _ => return None,
+        }
+    }
+    if jbool(p, "invert") == Some(true) {
+        d = d.with("Invr", D::Boolean(true));
+    }
+    Some(d)
+}
+
+/// Create / Release Clipping Mask (`groupEvent` / `ungroup`) on the target or a named layer.
+fn clipping_from(d: &Descriptor, id: &str) -> Mapped {
+    match get_ref(d, "null") {
+        None => none(id),
+        Some(r) if ref_class(r).as_deref() == Some("Lyr") => match layer_target(r) {
+            Some(p) => step(id, Value::Object(p)),
+            None => Mapped::Unsupported { harmless: false },
+        },
+        Some(_) => Mapped::Unsupported { harmless: false },
+    }
+}
+
+fn clipping_to(_: &str, p: &Value) -> Option<Descriptor> {
+    Some(desc("null").with("null", layer_ref(p)))
+}
+
 /// Every Photoshop event PhotoCraft maps. The order matters only for the panel label.
 const EVENTS: &[Event] = &[
     // Filters.
@@ -2620,9 +3019,17 @@ const EVENTS: &[Event] = &[
     ev!("Mdn ", "median", "Median", "filter.noise.median", &[F("Rds ", "radius", Kind::Px)]),
     ev!("DstS", "dustAndScratches", "Dust & Scratches", "filter.noise.dustAndScratches", &[F("Rds ", "radius", Kind::Px), F("Thsh", "threshold", Kind::Long)]),
     ev!("Dspc", "despeckle", "Despeckle", "filter.noise.despeckle", &[]),
+    // Photoshop records Emboss's angle, height and amount as plain integers (#7946).
+    ev!(
+        "Embs",
+        "emboss",
+        "Emboss",
+        "filter.stylize.emboss",
+        &[F("Angl", "angle", Kind::Long), F("Hght", "height", Kind::Long), F("Amnt", "amount", Kind::Long)]
+    ),
     ev!("MtnB", "motionBlur", "Motion Blur", "filter.blur.motionBlur", &[F("Angl", "angle", Kind::Ang), F("Dstn", "distance", Kind::Px)]),
-    ev!("BoxB", "boxblur", "Box Blur", "filter.blur.boxBlur", &[F("Rds ", "radius", Kind::Px)]),
-    ev!("SrfB", "surfaceBlur", "Surface Blur", "filter.blur.surfaceBlur", &[F("Rds ", "radius", Kind::Px), F("Thsh", "threshold", Kind::Long)]),
+    ev!("", "boxblur", "Box Blur", "filter.blur.boxBlur", &[F("Rds ", "radius", Kind::Px)]),
+    ev!("", "surfaceBlur", "Surface Blur", "filter.blur.surfaceBlur", &[F("Rds ", "radius", Kind::Px), F("Thsh", "threshold", Kind::Long)]),
     ev!(
         "SmrB",
         "smartBlur",
@@ -2648,8 +3055,8 @@ const EVENTS: &[Event] = &[
     ev!("ShrM", "sharpenMore", "Sharpen More", "filter.sharpen.sharpenMore", &[]),
     ev!("ShrE", "sharpenEdges", "Sharpen Edges", "filter.sharpen.sharpenEdges", &[]),
     ev!("HghP", "highPass", "High Pass", "filter.other.highPass", &[F("Rds ", "radius", Kind::Px)]),
-    ev!("Mnm ", "minimum", "Minimum", "filter.other.minimum", &[F("Rds ", "radius", Kind::Px)]),
-    ev!("Mxm ", "maximum", "Maximum", "filter.other.maximum", &[F("Rds ", "radius", Kind::Px)]),
+    ev!("Mnm ", "minimum", "Minimum", "filter.other.minimum", &[F("Rds ", "radius", Kind::Px)], unless preserves_roundness),
+    ev!("Mxm ", "maximum", "Maximum", "filter.other.maximum", &[F("Rds ", "radius", Kind::Px)], unless preserves_roundness),
     ev!(
         "Ofst",
         "offset",
@@ -2657,10 +3064,18 @@ const EVENTS: &[Event] = &[
         "filter.other.offset",
         &[F("Hrzn", "horizontal", Kind::Long), F("Vrtc", "vertical", Kind::Long), F("Fl  ", "undefinedAreas", Kind::Enum("FlMd", OFFSET_FILL))]
     ),
-    ev!("Rple", "ripple", "Ripple", "filter.distort.ripple", &[F("Amnt", "amount", Kind::Long), F("RplS", "size", Kind::Enum("RplS", RIPPLE_SIZE))]),
+    ev!("Rple", "ripple", "Ripple", "filter.distort.ripple", &[F("Amnt", "amount", Kind::ExactLong), F("RplS", "size", Kind::Enum("RplS", RIPPLE_SIZE))]),
     ev!("Crst", "crystallize", "Crystallize", "filter.pixelate.crystallize", &[F("ClSz", "cellSize", Kind::Long)]),
     Event { code: "GEfc", name: "filterGallery", label: "Filter Gallery", ids: GALLERY_IDS, from: gallery_from, to: gallery_to },
     // Adjustments (Image › Adjustments).
+    Event {
+        code: "",
+        name: "adaptCorrect",
+        label: "Shadows/Highlights",
+        ids: &["image.adjustments.shadowsHighlights"],
+        from: shadows_highlights_from,
+        to: shadows_highlights_to,
+    },
     Event {
         code: "Lvls",
         name: "levels",
@@ -2690,7 +3105,7 @@ const EVENTS: &[Event] = &[
     adjustment_event!("Exps", "Exps", "exposure", "Exposure"),
     adjustment_event!("PhtF", "PhtF", "photoFilter", "Photo Filter"),
     Event {
-        code: "BlnW",
+        code: "",
         name: "blackAndWhite",
         label: "Black & White",
         ids: &["image.adjustments.blackWhite"],
@@ -2811,6 +3226,10 @@ const EVENTS: &[Event] = &[
             "layer.newAdjustmentLayer.channelMixer",
             "layer.newAdjustmentLayer.selectiveColor",
             "layer.newAdjustmentLayer.gradientMap",
+            "layer.layerMask.revealAll",
+            "layer.layerMask.hideAll",
+            "layer.layerMask.revealSelection",
+            "layer.layerMask.hideSelection",
             "file.new",
             "file.newFromClipboard",
         ],
@@ -2829,6 +3248,7 @@ const EVENTS: &[Event] = &[
             "select.rect",
             "select.lasso",
             "select.editInQuickMaskMode",
+            "tools.setColors",
             "layer.setProps",
             "layer.renameLayer",
             "layer.setLabelColor",
@@ -2854,6 +3274,10 @@ const EVENTS: &[Event] = &[
             "channel.target",
             "edit.undo",
             "edit.redo",
+            "view.fitOnScreen",
+            "view.actualPixels",
+            "view.zoomIn",
+            "view.zoomOut",
         ],
         from: select_from,
         to: select_to,
@@ -2882,7 +3306,7 @@ const EVENTS: &[Event] = &[
         from: move_from,
         to: move_to,
     },
-    ev!("Fltn", "flattenImage", "Flatten Image", "layer.flattenImage", &[]),
+    ev!("FltI", "flattenImage", "Flatten Image", "layer.flattenImage", &[]),
     Event {
         code: "MrgV",
         name: "mergeVisible",
@@ -2892,11 +3316,49 @@ const EVENTS: &[Event] = &[
         to: merge_visible_to,
     },
     ev!("Mrg2", "mergeLayersNew", "Merge Layers", "layer.mergeLayers", &[]),
+    Event {
+        code: "Ungr",
+        name: "ungroup",
+        label: "Release Clipping Mask",
+        ids: &["layer.releaseClippingMask"],
+        from: |d| clipping_from(d, "layer.releaseClippingMask"),
+        to: clipping_to,
+    },
     ev!("CpTL", "copyToLayer", "Layer Via Copy", "layer.new.layerViaCopy", &[]),
     ev!("CtTL", "cutToLayer", "Layer Via Cut", "layer.new.layerViaCut", &[]),
     ev!("", "rasterizeLayer", "Rasterize", "layer.rasterize.layer", &[]),
     ev!("", "selectAllLayers", "Select All Layers", "select.allLayers", &[]),
     ev!("", "selectNoLayers", "Deselect Layers", "select.deselectLayers", &[]),
+    Event {
+        code: "GrpL",
+        name: "groupEvent",
+        label: "Create Clipping Mask",
+        ids: &["layer.createClippingMask"],
+        from: |d| clipping_from(d, "layer.createClippingMask"),
+        to: clipping_to,
+    },
+    ev!("", "ungroupLayersEvent", "Ungroup Layers", "layer.ungroupLayers", &[]),
+    ev!("", "copyEffects", "Copy Layer Style", "layer.layerStyle.copyLayerStyle", &[]),
+    ev!("", "pasteEffects", "Paste Layer Style", "layer.layerStyle.pasteLayerStyle", &[]),
+    Event {
+        code: "",
+        name: "collapseAllGroupsEvent",
+        label: "Collapse All Groups",
+        ids: &["layer.setExpanded"],
+        from: |_| step("layer.setExpanded", json!({"all": true, "expanded": false})),
+        to: |_, p| (jbool(p, "all") == Some(true) && jbool(p, "expanded") == Some(false)).then(|| desc("null")),
+    },
+    Event {
+        code: "",
+        name: "applyComp",
+        label: "Apply Layer Comp",
+        ids: &["layerComp.apply"],
+        from: |d| match get_ref(d, "null").map(target) {
+            Some(Target::Name(n)) => step("layerComp.apply", json!({"comp": n})),
+            _ => Mapped::Unsupported { harmless: false },
+        },
+        to: |_, p| Some(desc("null").with("null", name_ref("compsClass", jstr(p, "comp")?))),
+    },
     ev!("Dfrg", "defringe", "Defringe", "layer.matting.defringe", &[F("Wdth", "width", Kind::Px)]),
     Event {
         code: "Algn",
@@ -2922,10 +3384,35 @@ const EVENTS: &[Event] = &[
     ev!("Brdr", "border", "Border", "select.modify.border", &[F("Wdth", "radius", Kind::Px)]),
     ev!("Grow", "grow", "Grow", "select.grow", &[F("Tlrn", "tolerance", Kind::Long)]),
     ev!("Smlr", "similar", "Similar", "select.similar", &[F("Tlrn", "tolerance", Kind::Long)]),
-    ev!("", "refineSelectionEdge", "Select and Mask", "select.refineEdge", REFINE_EDGE),
+    // `refineSelectionEdge` has no Sample All Layers, so a step with it exports as
+    // `smartBrushWorkspace` instead of dropping it.
+    Event {
+        code: "",
+        name: "refineSelectionEdge",
+        label: "Select and Mask",
+        ids: &["select.refineEdge"],
+        from: |d| match fields_from(d, REFINE_EDGE) {
+            Some(m) => step("select.refineEdge", Value::Object(m)),
+            None => Mapped::Unsupported { harmless: false },
+        },
+        to: |_, p| if p.get("sampleAllLayers").is_some() { None } else { fields_to(p, REFINE_EDGE, desc("null")) },
+    },
+    ev!("", "smartBrushWorkspace", "Select and Mask", "select.refineEdge", SMART_BRUSH),
+    ev!("", "autoCutout", "Select Subject", "select.subject", &[F("sampleAllLayers", "sampleAllLayers", Kind::Bool)]),
+    Event { code: "ClrR", name: "colorRange", label: "Color Range", ids: &["select.colorRange"], from: color_range_from, to: color_range_to },
     // Edit.
     Event { code: "Fl  ", name: "fill", label: "Fill", ids: &["edit.fill", "paint.bucket"], from: fill_from, to: fill_to },
-    ev!("Strk", "stroke", "Stroke", "edit.stroke", STROKE),
+    Event {
+        code: "Strk",
+        name: "stroke",
+        label: "Stroke",
+        ids: &["edit.stroke"],
+        from: |d| match fields_from(d, STROKE) {
+            Some(m) => step("edit.stroke", Value::Object(m)),
+            None => Mapped::Unsupported { harmless: false },
+        },
+        to: stroke_to,
+    },
     ev!("copy", "copyEvent", "Copy", "edit.copy", &[]),
     ev!("CpyM", "copyMerged", "Copy Merged", "edit.copyMerged", &[]),
     ev!("cut ", "cut", "Cut", "edit.cut", &[]),
@@ -2968,9 +3455,20 @@ const EVENTS: &[Event] = &[
     Event { code: "Stop", name: "stop", label: "Stop", ids: &[STOP_MESSAGE], from: stop_from, to: stop_to },
 ];
 
+/// Four-char codes PhotoCraft once exported for events Photoshop only runs by name (or by
+/// another code), with the name they stand for. Measured in Photoshop: `executeAction` with
+/// these codes fails ("the command is not currently available"), and `Fltn` is the
+/// `flatness` property, not the flatten event. Import keeps accepting them so actions saved
+/// before still load; export never writes them.
+const LEGACY_CODES: &[(&str, &str)] = &[("BoxB", "boxblur"), ("SrfB", "surfaceBlur"), ("Fltn", "flattenImage"), ("BlnW", "blackAndWhite")];
+
 fn event_for(item: &AtnEvent) -> Option<&'static Event> {
     let id = item.id();
-    EVENTS.iter().find(|e| (!e.code.is_empty() && e.code.trim_end() == id.trim_end()) || e.name == id)
+    let find = |id: &str| EVENTS.iter().find(|e| (!e.code.is_empty() && e.code.trim_end() == id.trim_end()) || e.name == id);
+    find(&id).or_else(|| match item {
+        AtnEvent::Code(_) => LEGACY_CODES.iter().find(|(code, _)| *code == id).and_then(|(_, name)| find(name)),
+        AtnEvent::Name(_) => None,
+    })
 }
 
 /// The event `id` exports as: the first event listing it whose converter accepts the params
@@ -3003,7 +3501,7 @@ pub struct Imported {
 
 fn photoshop_step(item: &AtnItem) -> (String, Value) {
     let descriptor = item.descriptor.as_ref().map(|d| photocraft_paint::tile::b64_encode(&d.to_bytes()));
-    (PHOTOSHOP_STEP.into(), json!({"event": item.event.id(), "name": item.dictionary, "descriptor": descriptor}))
+    (PHOTOSHOP_STEP.into(), json!({"event": item.event.id(), "name": item.label(), "descriptor": descriptor}))
 }
 
 /// Integral floats become integers (`2.0` → `2`), as the commands' own docs and recordings
@@ -3038,7 +3536,7 @@ fn convert_action(a: &AtnAction, set: &str, unsupported: &mut Vec<Unsupported>) 
         let (new_steps, enabled) = match mapped {
             Mapped::Steps(s) => (s, item.enabled),
             Mapped::Unsupported { harmless } => {
-                unsupported.push(Unsupported { action: name.clone(), step: i, event: item.event.id(), name: item.dictionary.clone() });
+                unsupported.push(Unsupported { action: name.clone(), step: i, event: item.event.id(), name: item.label() });
                 (vec![photoshop_step(item)], item.enabled && !harmless)
             }
         };
@@ -3066,8 +3564,8 @@ pub fn import(bytes: &[u8]) -> std::result::Result<Imported, String> {
     let mut out = Imported { set: set.clone(), warnings: file.warnings.clone(), ..Default::default() };
     for a in &file.actions {
         let action = convert_action(a, &set, &mut out.unsupported);
-        if a.function_key > 0 && !a.shift && !a.command {
-            out.function_keys.push((action.name.clone(), format!("F{}", a.function_key)));
+        if a.function_key > 0 {
+            out.function_keys.push((action.name.clone(), function_key_name(a.function_key, a.shift, a.command)));
         }
         out.actions.push(action);
     }
@@ -3089,25 +3587,49 @@ fn export_item(id: &str, params: &Value, set: &str) -> Option<AtnItem> {
         let event = jstr(params, "event")?;
         let event = match event.as_bytes() {
             [a, b, c, d] => AtnEvent::Code([*a, *b, *c, *d]),
-            _ => AtnEvent::Name(event.to_string()),
+            _ => AtnEvent::name(event),
         };
         let descriptor = match jstr(params, "descriptor") {
             Some(b64) => Some(Descriptor::from_bytes(&photocraft_paint::tile::b64_decode(b64)?).ok()?),
             None => None,
         };
-        return Some(AtnItem { event, dictionary: jstr(params, "name").unwrap_or("").to_string(), descriptor, ..Default::default() });
+        return Some(AtnItem { event, dictionary: jstr(params, "name").unwrap_or("").as_bytes().to_vec(), descriptor, ..Default::default() });
     }
     let mut params = params.clone();
     if (id == "actions.play" || id == "actions.conditional") && params.get("set").is_none() {
         params["set"] = json!(set);
     }
     let (e, descriptor) = event_and_descriptor(id, &params)?;
-    let event = if e.code.is_empty() { AtnEvent::Name(e.name.to_string()) } else { AtnEvent::Code(e.code.as_bytes().try_into().ok()?) };
-    Some(AtnItem { event, dictionary: e.label.to_string(), descriptor: Some(descriptor), ..Default::default() })
+    let event = if e.code.is_empty() { AtnEvent::name(e.name) } else { AtnEvent::Code(e.code.as_bytes().try_into().ok()?) };
+    Some(AtnItem { event, dictionary: e.label.as_bytes().to_vec(), descriptor: Some(descriptor), ..Default::default() })
+}
+
+/// An action's key as a shortcut string: `F5`, with Photoshop's Shift and Command options
+/// `Shift+F5`, `Cmd+F5` or `Cmd+Shift+F5` (#7646).
+pub fn function_key_name(key: u16, shift: bool, command: bool) -> String {
+    format!("{}{}F{key}", if command { "Cmd+" } else { "" }, if shift { "Shift+" } else { "" })
+}
+
+/// The `.atn` function key (1…15), Shift and Command of a shortcut string, or `None` for
+/// anything else.
+pub fn parse_function_key(key: &str) -> Option<(u16, bool, bool)> {
+    let (mut shift, mut command) = (false, false);
+    let mut rest = key;
+    loop {
+        if let Some(r) = rest.strip_prefix("Cmd+").filter(|_| !command) {
+            (command, rest) = (true, r);
+        } else if let Some(r) = rest.strip_prefix("Shift+").filter(|_| !shift) {
+            (shift, rest) = (true, r);
+        } else {
+            break;
+        }
+    }
+    let n = rest.strip_prefix('F')?.parse::<u16>().ok().filter(|n| (1..=15).contains(n))?;
+    Some((n, shift, command))
 }
 
 /// The `.atn` bytes of `actions` as the set `set`. `function_keys` gives each action's key
-/// (`F1`…`F15`). Steps with no Photoshop equivalent are an error unless `skip_unsupported`.
+/// (`F1`…`F15`, with `Shift+` and `Cmd+` as [`function_key_name`] writes them). Steps with no Photoshop equivalent are an error unless `skip_unsupported`.
 pub fn export(
     set: &str,
     actions: &[&Action],
@@ -3118,11 +3640,8 @@ pub fn export(
     let mut file = AtnFile { name: UnicodeString::new_nul(set), expanded: true, actions: Vec::new(), warnings: Vec::new() };
     for a in actions {
         let mut out = AtnAction { name: UnicodeString::new_nul(&a.name), expanded: false, ..Default::default() };
-        if let Some((_, key)) = function_keys.iter().find(|(n, _)| n == &a.name)
-            && let Some(n) = key.strip_prefix('F').and_then(|n| n.parse::<u16>().ok())
-            && (1..=15).contains(&n)
-        {
-            out.function_key = n;
+        if let Some((n, shift, command)) = function_keys.iter().find(|(n, _)| n == &a.name).and_then(|(_, key)| parse_function_key(key)) {
+            (out.function_key, out.shift, out.command) = (n, shift, command);
         }
         for (i, (id, params)) in a.steps.iter().enumerate() {
             let Some(mut item) = export_item(id, params, set) else {
@@ -3180,31 +3699,39 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut taken: Vec<String> = s.actions.list.iter().map(|a| a.name.clone()).collect();
     let mut names = Vec::with_capacity(imp.actions.len());
-    let mut renamed = Vec::new();
+    // The file's name of each action that had to be renamed, and its new name.
+    let mut renamed: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut steps = 0usize;
+    let mut added = Vec::with_capacity(imp.actions.len());
     for mut a in imp.actions {
         let name = unique(&a.name, &taken);
         if name != a.name {
-            renamed.push((a.name.clone(), name.clone()));
+            renamed.entry(a.name.clone()).or_insert_with(|| name.clone());
         }
         a.name = name.clone();
         taken.push(name.clone());
         steps = steps.saturating_add(a.steps.len());
         names.push(name);
-        s.actions.list.push(a);
+        added.push(a);
     }
-    // A Play step calls its action by name: follow renames within the set.
-    for (from, to) in &renamed {
-        for a in s.actions.list.iter_mut().filter(|a| a.set.as_deref() == Some(imp.set.as_str())) {
-            for (id, params) in &mut a.steps {
-                if id == "actions.play" && params.get("action").and_then(Value::as_str) == Some(from) {
-                    params["action"] = json!(to);
+    // Play and Conditional steps call actions by name: follow the renames in the actions just
+    // loaded, each target looked up once by the name the file gave it.
+    for a in &mut added {
+        for (id, params) in &mut a.steps {
+            let keys: &[&str] = match id.as_str() {
+                "actions.play" => &["action"],
+                "actions.conditional" => &["then", "else"],
+                _ => &[],
+            };
+            for key in keys {
+                if let Some(to) = params.get(*key).and_then(Value::as_str).and_then(|n| renamed.get(n)) {
+                    params[*key] = json!(to);
                 }
             }
         }
     }
-    let keys: Vec<(String, String)> =
-        imp.function_keys.into_iter().map(|(n, k)| (renamed.iter().find(|(f, _)| f == &n).map_or(n, |(_, t)| t.clone()), k)).collect();
+    s.actions.list.extend(added);
+    let keys: Vec<(String, String)> = imp.function_keys.into_iter().map(|(n, k)| (renamed.get(&n).cloned().unwrap_or(n), k)).collect();
     if !keys.is_empty() {
         s.edit_prefs(|prefs| {
             for (name, key) in &keys {
@@ -3227,6 +3754,7 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "actions.save";
+    crate::actions_cmds::flush_recording(s)?;
     let skip = match p.get("skipUnsupported") {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,

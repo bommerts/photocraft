@@ -115,6 +115,7 @@ pub(crate) fn play(app: &mut PhotocraftApp, params: &Value) -> Result<Value, Str
             paused = Some(json!({"step": i, "id": id, "dialog": dialog}));
             break;
         }
+        let target = app.session.active().map(|d| d.doc.id);
         let result = (|| {
             if let Some(auth) = app.session.authorize {
                 auth(id, p).map_err(|e| e.to_string())?;
@@ -137,7 +138,7 @@ pub(crate) fn play(app: &mut PhotocraftApp, params: &Value) -> Result<Value, Str
         })();
         match result {
             Ok(value) => {
-                if let Some(error) = actions_cmds::nested_failure(id, &value) {
+                if let Some(error) = actions_cmds::nested_failure(id, &value).or_else(|| actions_cmds::save_target_closed(&app.session, id, target)) {
                     failed = Some(json!({"step": i, "id": id, "error": error}));
                     break;
                 }
@@ -824,16 +825,28 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                     app.ui.actions.expanded[i] = !expanded;
                 }
             }
-            resp.context_menu(|ui| {
+            // Clicks inside stay open, so Shift and Command can both be ticked; every item that
+            // finishes closes the menu itself.
+            egui::Popup::context_menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                 ui.label(tl!("Keyboard Shortcuts"));
                 let current = app.session.prefs().shortcuts.get(&shortcut_id(name)).cloned().unwrap_or_default();
-                for key in std::iter::once(String::new()).chain((1..=12).map(|n| format!("F{n}"))) {
-                    let label = if key.is_empty() { tl!("None").to_string() } else { key.clone() };
-                    if ui.selectable_label(current == key, label).clicked() {
-                        let _ = assign_shortcut(app, name, &key);
+                // Photoshop's Action Options: a function key, with Shift and Command (#7646).
+                let (key, mut shift, mut command) = photocraft_engine::atn_cmds::parse_function_key(&current).unwrap_or((0, false, false));
+                for n in std::iter::once(0).chain(1..=12) {
+                    let label = if n == 0 { tl!("None").to_string() } else { format!("F{n}") };
+                    if ui.selectable_label(key == n, label).clicked() {
+                        let chosen = if n == 0 { String::new() } else { photocraft_engine::atn_cmds::function_key_name(n, shift, command) };
+                        let _ = assign_shortcut(app, name, &chosen);
                         ui.close();
                     }
                 }
+                ui.add_enabled_ui(key > 0, |ui| {
+                    let command_label = if cfg!(target_os = "macos") { tl!("Command") } else { tl!("Ctrl") };
+                    let toggled = ui.checkbox(&mut shift, tl!("Shift")).changed() | ui.checkbox(&mut command, command_label).changed();
+                    if toggled {
+                        let _ = assign_shortcut(app, name, &photocraft_engine::atn_cmds::function_key_name(key, shift, command));
+                    }
+                });
                 ui.separator();
                 ui.menu_button(tl!("Color"), |ui| {
                     for (id, label) in [
@@ -1032,6 +1045,44 @@ mod tests {
         };
         assert!(bottom(700.0) - bottom(300.0) > 350.0, "list uses the additional panel height instead of stopping at 320 px");
         assert!(crate::dock::Group::History.scrolls_itself(1));
+    }
+
+    /// #7646: an action's function key can take Shift and Command, as in Photoshop's Action
+    /// Options, and only that combination plays it.
+    #[test]
+    fn a_function_key_with_shift_and_command_plays_its_action() {
+        use egui::{Event, Key, Modifiers};
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
+        app.session.actions.list.push(Action {
+            name: "Action 1".into(),
+            steps: vec![("layer.new.layer".into(), json!({}))],
+            disabled: Default::default(),
+            ..Default::default()
+        });
+        let key = photocraft_engine::atn_cmds::function_key_name(2, true, true);
+        assert_eq!(key, "Cmd+Shift+F2");
+        assign_shortcut(&mut app, "Action 1", &key).unwrap();
+        let ctx = egui::Context::default();
+        let press = |app: &mut PhotocraftApp, modifiers| {
+            ctx.begin_pass(egui::RawInput {
+                events: vec![
+                    Event::ModifiersChanged(modifiers),
+                    Event::Key { key: Key::F2, physical_key: None, pressed: true, repeat: false, modifiers },
+                    Event::Key { key: Key::F2, physical_key: None, pressed: false, repeat: false, modifiers },
+                ],
+                ..Default::default()
+            });
+            crate::shortcuts::handle(app, &ctx);
+            ctx.end_pass().textures_delta.clear();
+        };
+        let layers = |app: &PhotocraftApp| app.session.active().unwrap().doc.layers.len();
+        let before = layers(&app);
+        press(&mut app, Modifiers::NONE);
+        press(&mut app, Modifiers::SHIFT);
+        assert_eq!(layers(&app), before, "F2 and Shift+F2 alone don't play it");
+        press(&mut app, Modifiers::SHIFT | Modifiers::COMMAND);
+        assert_eq!(layers(&app), before + 1, "Cmd+Shift+F2 plays it");
     }
 
     #[test]
@@ -1658,5 +1709,73 @@ mod tests {
         assert!(!h.state().ui.actions.button_mode);
         assert!(h.query_by_label("Button Mode").is_some());
         assert_eq!(h.query_all_by_role(egui::accesskit::Role::CheckBox).count(), 1, "the step list returns when Button Mode is turned off");
+    }
+
+    /// An imported Close with Save: Yes plays as Save then Close. A Save Document script event
+    /// that closes the saved document stops playback, so the Close never reaches another dirty
+    /// document (#7367).
+    #[test]
+    fn save_hook_closing_the_target_stops_an_imported_close_with_save() {
+        use photocraft_psd::atn::{self, AtnEvent, AtnItem};
+        use photocraft_psd::descriptor::{Descriptor, Id, Value as D};
+        use std::{cell::RefCell, rc::Rc};
+        // A one-step .atn: Close (`Cls `) with Save: Yes.
+        let seed = Action::new("Seed", vec![("layer.new.layer".into(), json!({}))]);
+        let (bytes, _) = photocraft_engine::atn_cmds::export("Set", &[&seed], &[], false).unwrap();
+        let mut f = atn::parse(&bytes).unwrap();
+        f.actions[0].items = vec![AtnItem {
+            event: AtnEvent::Code(*b"Cls "),
+            dictionary: "Close".into(),
+            descriptor: Some(Descriptor::new("null").with("Svng", D::Enumerated { type_id: Id::new("YsN "), value: Id::new("Ys  ") })),
+            ..Default::default()
+        }];
+        let imported = photocraft_engine::atn_cmds::import(&atn::write(&f).unwrap()).unwrap();
+        let close_with_save = imported.actions[0].clone();
+        assert_eq!(close_with_save.steps, [("file.save".into(), json!({})), ("file.close".into(), json!({}))]);
+        for hook in ["none", "activate", "close"] {
+            let writes = Rc::new(RefCell::new(Vec::<String>::new()));
+            let w = writes.clone();
+            let services = crate::Services {
+                export: Some(Box::new(|doc, _, _| Ok((doc.name.clone().into_bytes(), Vec::new())))),
+                write: Some(Box::new(move |path, _| {
+                    w.borrow_mut().push(path.to_string());
+                    Ok(())
+                })),
+                ..Default::default()
+            };
+            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+            // B is dirty with an unsaved KeepB layer; A is active and has its own file.
+            for name in ["B", "A"] {
+                app.run("file.new", json!({"name": name, "width": 2, "height": 2})).unwrap();
+            }
+            assert!(app.session.set_active(0));
+            app.run("layer.new.layer", json!({"name": "KeepB"})).unwrap();
+            assert!(app.session.set_active(1));
+            app.session.active_mut().unwrap().path = Some("A.psd".into());
+            app.session.actions.list.push(close_with_save.clone());
+            let steps = match hook {
+                "activate" => json!([["document.activate", {"document": 0}]]),
+                "close" => json!([["file.close", {}]]),
+                _ => Value::Null,
+            };
+            if !steps.is_null() {
+                app.run("file.scripts.scriptEventsManager", json!({"add": {"event": "saveDocument", "steps": steps}})).unwrap();
+            }
+            let r = app.run("actions.play", json!({"action": 0})).unwrap();
+            assert_eq!(*writes.borrow(), ["A.psd"], "hook={hook}: A is saved once");
+            let names: Vec<Vec<String>> = app.session.documents().iter().map(|d| d.doc.layers.iter().map(|l| l.name.clone()).collect()).collect();
+            assert_eq!(app.session.documents().len(), 1, "hook={hook}: only A closes; result={r}");
+            assert_eq!(app.session.active().unwrap().doc.name, "B", "hook={hook}");
+            assert_eq!(names, [["Background", "KeepB"]], "hook={hook}: B stays open with its unsaved layer");
+            if hook == "close" {
+                assert_eq!(r["failed"]["step"], 0, "{r}");
+                assert_eq!(r["failed"]["id"], "file.save", "{r}");
+                assert!(r["failed"]["error"].as_str().unwrap().contains("closed during the save"), "{r}");
+            } else {
+                assert!(r.get("failed").is_none(), "hook={hook}: {r}");
+            }
+            assert_eq!(app.session.actions.playing, 0);
+            assert!(app.session.actions.playback_stack.is_empty());
+        }
     }
 }

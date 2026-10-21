@@ -36,6 +36,10 @@ pub use photocraft_gpu::{DeviceHealth, Fault};
 
 /// Default tile side; documents up to this size (and the device limit) use a single texture.
 pub const DEFAULT_TILE: u32 = 8192;
+/// Mip levels no larger than this on either side are redrawn whole on every edit rather than
+/// just their damage (see [`mip_damage`], #6418). Every corrupted level measured was at most
+/// 64 px; this leaves a factor of two.
+const WHOLE_MIP_SIDE: u32 = 128;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Canvas texture format of high-bit documents (see [`GpuCanvas::format_for`]).
 const FORMAT_HIGH: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -75,7 +79,7 @@ pub struct ViewParams {
     /// Distinguishes views painted in the same frame (main canvas, extra windows).
     pub view_key: u64,
     /// Display transform: 0 none, 1 the document's display LUT (document → monitor profile,
-    /// Proof Colors), 2 LUT plus the gamut warning (see [`GpuCanvas::set_display_lut`]).
+    /// Proof Colors), 2 LUT plus the gamut warning, 3 matrix/shaper (see [`GpuCanvas::set_display_lut`]).
     pub display: u8,
     /// The display the view is on (its LUT is per document and display, #569; 0 = unknown).
     pub output: u32,
@@ -794,10 +798,23 @@ impl GpuCanvas {
                     log::warn!("set_display_lut: {} bytes for a {size}³ LUT; ignored", bytes.len());
                     return;
                 }
-                let bg = lut_bind_group(device, queue, &res.lut_bgl, size, bytes);
+                let bg = lut_bind_group(device, queue, &res.lut_bgl, size, bytes, None);
                 res.luts.insert((doc, output), bg);
             }
         }
+    }
+
+    /// Set a separately sampled curve/matrix/curve display transform. CMS validates this
+    /// representation and provides bounded tables; no profile interpretation lives in the UI.
+    pub fn set_display_matrix_shaper(&self, doc: u64, output: u32, shaper: &photocraft_cms::GpuMatrixShaper) {
+        if !self.health.is_ok() {
+            return;
+        }
+        let mut renderer = self.rs.renderer.write();
+        let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return };
+        let bg = lut_bind_group(&self.rs.device, &self.rs.queue, &res.lut_bgl, 2, &identity_lut_bytes(), Some(shaper));
+        res.display_lut_signatures.remove(&(doc, output));
+        res.luts.insert((doc, output), bg);
     }
 
     /// Read back level 0 of document `key`'s canvas texture: its format, size and the stored
@@ -1058,6 +1075,9 @@ pub struct GpuInfo {
     pub video_memory_mb: Option<u64>,
     /// `performance.gpuBackend` at launch.
     pub preference: String,
+    /// Every graphics adapter the window could have used, by name (Preferences › Performance ›
+    /// Graphics Adapter lists them). Empty in hosts that don't set it.
+    pub adapters: Vec<String>,
     /// The backend startup chose ("auto", "dx12", "cpu", …, or "env" for `WGPU_BACKEND`).
     pub selected: String,
     /// Why startup didn't use the preference as is (previous start crashed, `--safe-gpu`,
@@ -1073,6 +1093,17 @@ pub struct GpuInfo {
 }
 
 impl GpuInfo {
+    /// Record the adapters the instance found, without duplicates (one GPU shows up once per backend).
+    pub fn set_available(&mut self, adapters: &[wgpu::Adapter]) {
+        self.adapters.clear();
+        for a in adapters {
+            let name = a.get_info().name;
+            if !name.is_empty() && !self.adapters.contains(&name) {
+                self.adapters.push(name);
+            }
+        }
+    }
+
     /// Fill the adapter fields from `info`.
     pub fn set_adapter(&mut self, info: &wgpu::AdapterInfo) {
         self.adapter = info.name.clone();
@@ -1348,8 +1379,9 @@ impl LayerFit {
 /// Floor of the compositor's memory budget: enough for a viewport's pages of a dozen layers.
 pub const MIN_GPU_BUDGET: u64 = 512 << 20;
 
-/// Why a full refresh whose layer pages don't fit [`memory_budget`] goes to the CPU compositor.
-pub const OVER_BUDGET: &str = "layers exceed the GPU memory budget; full refresh on the CPU";
+/// Why a full refresh whose layer pages don't fit [`memory_budget`] (or GPU memory) goes to the
+/// CPU compositor.
+pub const OVER_BUDGET: &str = photocraft_gpu::OVER_BUDGET;
 
 /// GPU memory the wgpu compositor may hold for layer pages and effect maps.
 ///
@@ -1591,8 +1623,16 @@ impl Default for CanvasStyle {
     }
 }
 
-/// A `size`³ RGBA8 3D texture bound for the canvas shader.
-fn lut_bind_group(device: &wgpu::Device, queue: &wgpu::Queue, bgl: &wgpu::BindGroupLayout, size: u32, bytes: &[u8]) -> wgpu::BindGroup {
+/// A display transform: either the existing 3D LUT or separate full-float shapers and
+/// matrix. Pack curves into short rows to stay within WebGL2's texture-size limits.
+fn lut_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    bgl: &wgpu::BindGroupLayout,
+    size: u32,
+    bytes: &[u8],
+    shaper: Option<&photocraft_cms::GpuMatrixShaper>,
+) -> wgpu::BindGroup {
     let extent = wgpu::Extent3d { width: size, height: size, depth_or_array_layers: size };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("pc_display_lut"),
@@ -1611,10 +1651,48 @@ fn lut_bind_group(device: &wgpu::Device, queue: &wgpu::Queue, bgl: &wgpu::BindGr
         extent,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let (width, height, curves, matrix) = if let Some(s) = shaper {
+        let width = 1024usize;
+        let count = s.input_table().len() + s.output_table().len();
+        let height = count.div_ceil(width);
+        let mut curves = Vec::with_capacity(width * height * 16);
+        for value in s.input_table().iter().chain(s.output_table()).flatten() {
+            curves.extend_from_slice(&value.to_le_bytes());
+        }
+        curves.resize(width * height * 16, 0);
+        (width as u32, height as u32, curves, s.matrix_rows())
+    } else {
+        (1, 1, vec![0; 16], [[0.0; 4]; 3])
+    };
+    let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let curves_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("pc_display_shapers"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // textureLoad + explicit interpolation needs no optional float-filtering feature.
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo { texture: &curves_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        &curves,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 16), rows_per_image: Some(height) },
+        extent,
+    );
+    let curves_view = curves_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let matrix_bytes: Vec<u8> = matrix.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+    let matrix_buffer = init_buffer(device, "pc_display_matrix", &matrix_bytes, wgpu::BufferUsages::UNIFORM);
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("pc_display_lut"),
         layout: bgl,
-        entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }],
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&curves_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: matrix_buffer.as_entire_binding() },
+        ],
     })
 }
 
@@ -1727,7 +1805,20 @@ impl Resources {
             },
             count: None,
         };
-        let lut_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("pc_display_lut"), entries: &[lut_entry] });
+        let curves_entry = wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            count: None,
+        };
+        let lut_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("pc_display_lut"),
+            entries: &[lut_entry, curves_entry, uniform_entry(2, 48, wgpu::ShaderStages::FRAGMENT)],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pc_canvas"),
             bind_group_layouts: &[Some(&view_bgl), Some(&tile_bgl), Some(&lut_bgl)],
@@ -1798,7 +1889,7 @@ impl Resources {
         });
         let encode_pipeline = pipeline(device, "pc_encode", &encode_layout, &encode_module, ("vs", "fs"), FORMAT, None);
         let encode_pipeline_high = high.then(|| pipeline(device, "pc_encode_16f", &encode_layout, &encode_module, ("vs", "fs"), FORMAT_HIGH, None));
-        let identity_lut = lut_bind_group(device, queue, &lut_bgl, 2, &identity_lut_bytes());
+        let identity_lut = lut_bind_group(device, queue, &lut_bgl, 2, &identity_lut_bytes(), None);
         Self {
             lut_bgl,
             luts: HashMap::new(),
@@ -1847,6 +1938,20 @@ fn mip_count(w: u32, h: u32) -> u32 {
     32 - w.max(h).max(1).leading_zeros()
 }
 
+/// The rect (x0, y0, x1, y1) of a `lw`×`lh` mip level to redraw when `prev` changed in the level
+/// above: that damage halved and padded by one texel for odd-size rounding, or the whole level
+/// when it is at most [`WHOLE_MIP_SIDE`] on either side. On AMD's Vulkan driver a pass that draws
+/// only part of a level of 64 px or less corrupts texels outside its scissor, at the level's
+/// top-left (#6418: RX 6900 XT, driver 26.8.1; DX12 on the same card is fine). Such a level costs
+/// next to nothing to redraw, so this holds for every adapter; the levels after it are smaller
+/// still, so the rest of the chain is redrawn whole too.
+fn mip_damage([x0, y0, x1, y1]: [u32; 4], lw: u32, lh: u32) -> [u32; 4] {
+    if lw.max(lh) <= WHOLE_MIP_SIDE {
+        return [0, 0, lw, lh];
+    }
+    [(x0 / 2).saturating_sub(1), (y0 / 2).saturating_sub(1), (x1.div_ceil(2) + 1).min(lw), (y1.div_ceil(2) + 1).min(lh)]
+}
+
 /// A buffer holding `contents`, like `DeviceExt::create_buffer_init` but without its panic when
 /// the device was lost (an invalid buffer has no mapped range): the buffer is then just invalid.
 fn init_buffer(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
@@ -1863,11 +1968,34 @@ fn init_buffer(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu:
 
 impl DocTextures {
     /// The texture set for a `size` canvas, or `None` (nothing created) when it doesn't fit
-    /// the canvas budget.
+    /// the canvas budget or the GPU's memory. A set the GPU can't hold (a 3 GP canvas is 16 GB
+    /// of textures, #4017) lowers the budget below it, so that canvas and larger ones are drawn
+    /// on the CPU canvas instead of the out-of-memory error disabling the GPU for the session.
     fn new(device: &wgpu::Device, res: &Resources, size: [u32; 2], tile: u32, format: wgpu::TextureFormat) -> Option<Self> {
-        if canvas_texture_bytes(size, tile, texel_bytes(format)) > res.canvas_budget.load(Ordering::Relaxed) {
+        let bytes = canvas_texture_bytes(size, tile, texel_bytes(format));
+        if bytes > res.canvas_budget.load(Ordering::Relaxed) {
             return None;
         }
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let set = Self::create(device, res, size, tile, format);
+        // Native wgpu reports these synchronously; where they arrive later (WebGPU) none is seen.
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut error = None;
+        for pop in [memory.pop(), validation.pop()] {
+            if let std::task::Poll::Ready(Some(e)) = std::pin::pin!(pop).poll(&mut cx) {
+                error.get_or_insert(e);
+            }
+        }
+        if let Some(e) = error {
+            log::warn!("{} MB of canvas textures failed ({e}); larger canvases are drawn on the CPU", bytes >> 20);
+            res.canvas_budget.fetch_min(bytes.saturating_sub(1), Ordering::Relaxed);
+            return None;
+        }
+        Some(set)
+    }
+
+    fn create(device: &wgpu::Device, res: &Resources, size: [u32; 2], tile: u32, format: wgpu::TextureFormat) -> Self {
         let mut tiles = Vec::new();
         for ty in (0..size[1]).step_by(tile as usize) {
             for tx in (0..size[0]).step_by(tile as usize) {
@@ -1902,7 +2030,7 @@ impl DocTextures {
                 tiles.push(Tile { rect: [tx, ty, w, h], texture, levels, bind_group, _uniform: uniform });
             }
         }
-        Some(Self { size, format, tiles })
+        Self { size, format, tiles }
     }
 
     /// Write `size` pixels at document `origin` from `texels` (in the texture format, row stride
@@ -1944,9 +2072,7 @@ impl DocTextures {
             (x0, y0, x1, y1) = (x0 - tx, y0 - ty, x1 - tx, y1 - ty);
             for level in 1..t.levels.len() {
                 let (lw, lh) = ((tw >> level).max(1), (th >> level).max(1));
-                // Damage at this level, padded by one texel for odd-size rounding.
-                (x0, y0) = ((x0 / 2).saturating_sub(1), (y0 / 2).saturating_sub(1));
-                (x1, y1) = ((x1.div_ceil(2) + 1).min(lw), (y1.div_ceil(2) + 1).min(lh));
+                [x0, y0, x1, y1] = mip_damage([x0, y0, x1, y1], lw, lh);
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("pc_mip"),
                     layout: &res.mip_bgl,
@@ -2220,7 +2346,7 @@ struct View {
     a: vec4<f32>, // screen_w, screen_h, scale (device px per doc px), pixels_per_point
     b: vec4<f32>, // doc origin x, y (device px), doc w, h (doc px)
     c: vec4<f32>, // filter mode, lod, grid alpha, checker square (device px)
-    d: vec4<f32>, // pattern preview offset x, y (doc px), display (0 none, 1 LUT, 2 LUT + gamut), output linear
+    d: vec4<f32>, // pattern preview offset x, y (doc px), display (0 none, 1 LUT, 2 LUT + gamut, 3 matrix/shaper), output linear
     e: vec4<f32>, // checker light rgb, gamut warning opacity
     f: vec4<f32>, // checker dark rgb, 32-bit preview gain (2^exposure; 0 = off)
     g: vec4<f32>, // gamut warning rgb, 32-bit preview 1 / gamma
@@ -2233,6 +2359,36 @@ struct Tile { r: vec4<f32> }; // x, y, w, h in doc px
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var<uniform> tile: Tile;
 @group(2) @binding(0) var lut: texture_3d<f32>;
+@group(2) @binding(1) var display_curves: texture_2d<f32>;
+struct DisplayMatrix { r: vec4<f32>, g: vec4<f32>, b: vec4<f32> };
+@group(2) @binding(2) var<uniform> display_matrix: DisplayMatrix;
+
+fn curve_entry(index: u32) -> vec3<f32> {
+    let width = textureDimensions(display_curves).x;
+    return textureLoad(display_curves, vec2<i32>(i32(index % width), i32(index / width)), 0).rgb;
+}
+
+fn display_curve(c: vec3<f32>, offset: u32, intervals: f32) -> vec3<f32> {
+    let p = clamp(c, vec3(0.0), vec3(1.0)) * intervals;
+    let lo = vec3<u32>(floor(p));
+    let hi = min(lo + vec3(1u), vec3(u32(intervals)));
+    let f = fract(p);
+    return vec3(
+        mix(curve_entry(offset + lo.r).r, curve_entry(offset + hi.r).r, f.r),
+        mix(curve_entry(offset + lo.g).g, curve_entry(offset + hi.g).g, f.g),
+        mix(curve_entry(offset + lo.b).b, curve_entry(offset + hi.b).b, f.b)
+    );
+}
+
+fn matrix_display(c: vec3<f32>) -> vec3<f32> {
+    // Layout matches cms::GpuMatrixShaper: 4097 input entries, then 4096 inverse-curve
+    // entries indexed by the fourth root. This preserves near-black precision without
+    // interpolating across clipped corners of a coarse RGB cube.
+    let v = vec4(display_curve(c, 0u, 4096.0), 1.0);
+    let linear = vec3(dot(display_matrix.r, v), dot(display_matrix.g, v), dot(display_matrix.b, v));
+    let u = sqrt(sqrt(clamp(linear, vec3(0.0), vec3(1.0))));
+    return display_curve(u, 4097u, 4095.0);
+}
 
 struct VOut { @builtin(position) pos: vec4<f32> };
 
@@ -2377,10 +2533,15 @@ fn fs_tile(in: VOut) -> @location(0) vec4<f32> {
     if (view.d.z > 0.5 && col.a > 0.0) {
         // Colour management, Proof Colors, Gamut Warning: the document's display LUT (alpha flags
         // out-of-gamut colours).
-        let n = f32(textureDimensions(lut).x);
         let c = clamp(col.rgb / col.a, vec3(0.0), vec3(1.0));
-        let l = textureSampleLevel(lut, samp, (c * (n - 1.0) + 0.5) / n, 0.0);
-        let shown = select(l.rgb, mix(l.rgb, view.g.xyz, view.e.w), view.d.z > 1.5 && l.a > 0.5);
+        var shown: vec3<f32>;
+        if (view.d.z > 2.5) {
+            shown = matrix_display(c);
+        } else {
+            let n = f32(textureDimensions(lut).x);
+            let l = textureSampleLevel(lut, samp, (c * (n - 1.0) + 0.5) / n, 0.0);
+            shown = select(l.rgb, mix(l.rgb, view.g.xyz, view.e.w), view.d.z > 1.5 && l.a > 0.5);
+        }
         col = vec4(shown * col.a, col.a);
     }
     var rgb = col.rgb + checker(d) * (1.0 - col.a);
@@ -2565,6 +2726,17 @@ mod tests {
         assert!(separate_mip_targets(Dx12, nvidia, Some("1")));
         assert!(!separate_mip_targets(Dx12, intel, Some(" 0 ")));
         assert!(separate_mip_targets(Dx12, intel, Some("yes")));
+    }
+
+    /// #6418: levels of at most WHOLE_MIP_SIDE are redrawn whole; larger ones keep the damage.
+    #[test]
+    fn small_mip_levels_are_redrawn_whole() {
+        // A 3 × 3 dab at (800, 500) of a 1791 × 1083 tile, at mip 1 (895 × 541): halved and padded.
+        assert_eq!(mip_damage([800, 500, 803, 503], 895, 541), [399, 249, 403, 253]);
+        // At most 128 px on either side: the whole level, wherever the damage is.
+        assert_eq!(mip_damage([100, 60, 102, 63], 111, 67), [0, 0, 111, 67]);
+        assert_eq!(mip_damage([0, 0, 1, 1], 128, 2), [0, 0, 128, 2]);
+        assert_eq!(mip_damage([0, 0, 1, 1], 129, 2), [0, 0, 2, 2]);
     }
 
     #[test]

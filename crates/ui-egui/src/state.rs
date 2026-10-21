@@ -3,6 +3,74 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Photoshop-style Layers panel display preferences; part of serialized UI state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LayerThumbnailSize {
+    None,
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LayerThumbnailContents {
+    LayerBounds,
+    #[default]
+    EntireDocument,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LayersPanelOptions {
+    pub thumbnail_size: LayerThumbnailSize,
+    /// Thumbnail Contents in the Panel Options dialog. Not saved with these options: the dialog
+    /// shows and sets `interface.clipThumbnailsToLayerBounds` (Layer Bounds = clipped, #4281),
+    /// which the panel menu's Clip Thumbnails to Layer Bounds toggles too.
+    #[serde(skip)]
+    pub thumbnail_contents: LayerThumbnailContents,
+    pub show_filters: bool,
+    pub use_default_masks_on_fill_layers: bool,
+    pub expand_new_effects: bool,
+    pub add_copy_to_copied_layers_and_groups: bool,
+    pub preview_on_canvas_when_reordering_layers: bool,
+    pub show_layer_mask_badges: bool,
+}
+
+impl LayersPanelOptions {
+    /// Every option at the Photoshop default: Medium thumbnails, filters shown, new effects expanded, no mask badges.
+    pub fn defaults() -> Self {
+        Self {
+            thumbnail_size: LayerThumbnailSize::Medium,
+            thumbnail_contents: LayerThumbnailContents::EntireDocument,
+            show_filters: true,
+            use_default_masks_on_fill_layers: true,
+            expand_new_effects: true,
+            add_copy_to_copied_layers_and_groups: true,
+            preview_on_canvas_when_reordering_layers: true,
+            show_layer_mask_badges: false,
+        }
+    }
+}
+
+impl Default for LayersPanelOptions {
+    /// Same as [`LayersPanelOptions::defaults`], so serde fills missing fields with the Photoshop defaults.
+    fn default() -> Self {
+        Self::defaults()
+    }
+}
+
+/// Pending dialog data is transient: Cancel never changes persisted options.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayersPanelDialog {
+    PanelOptions(LayersPanelOptions),
+    NewLayer(String),
+    NewGroup(String),
+    LockLayers { transparency: bool, pixels: bool, position: bool, artboard: bool, all: bool },
+}
+
 /// Shared selection and capture for a point curve; document parameters remain with the host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -404,6 +472,10 @@ pub struct Panels {
     /// What Tab hid (toolbar, options bar, dock), so a second Tab brings back just those.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_by_tab: Option<[bool; 3]>,
+    /// Tab in Full Screen Mode shows the menu bar, toolbar, options bar and dock over the canvas
+    /// (#6760). Only a view of the moment: not saved, and the panels' own flags stay untouched.
+    #[serde(skip)]
+    pub full_screen_chrome: bool,
     /// The right dock's icon rail. An app that embeds PhotoCraft's UI can hide it for a simpler view.
     #[serde(default = "yes")]
     pub rail: bool,
@@ -435,6 +507,7 @@ impl Default for Panels {
             toolbar_double: false,
             dock: true,
             hidden_by_tab: None,
+            full_screen_chrome: false,
             rail: true,
             menu_bar: true,
             gradient_editor: false,
@@ -511,7 +584,9 @@ pub struct ToolOptions {
     pub tolerance: f32,
     pub contiguous: bool,
     pub anti_alias: bool,
-    pub sample_all_layers: bool,
+    /// Sample All Layers, kept per tool as in Photoshop (#5524). Stored under a new key, so the
+    /// single shared `sample_all_layers` of older preferences is ignored on load.
+    pub sample_all: SampleAllLayers,
     /// Object Selection › Object Finder: hovering highlights the object a click selects (#4087).
     pub object_finder: bool,
     /// Remove tool: the fill goes to a new layer above the target (Photoshop's Create a new layer).
@@ -603,6 +678,10 @@ pub struct ToolOptions {
     pub marquee_width: f32,
     #[serde(default = "one")]
     pub marquee_height: f32,
+    /// The unit Fixed Size's Width and Height show (a [`photocraft_engine::prefs::Unit`] name,
+    /// picked by right-clicking them); the size itself stays in pixels (#7910).
+    #[serde(default = "default_marquee_unit")]
+    pub marquee_unit: String,
     /// Move tool: Auto-Select (with "layer" or "group" target) and Show Transform Controls.
     /// Auto-Select is on with the "group" target by default, as in current Photoshop;
     /// ⌘/Ctrl-click inverts it.
@@ -653,8 +732,8 @@ pub struct ToolOptions {
     /// Crop gear menu (#1919): Show Cropped Area and the crop shield. See `crop_shield`.
     #[serde(default)]
     pub crop_shield: crate::crop_shield::CropShield,
-    /// Magic Eraser opacity % (tolerance, anti-alias, contiguous and sample-all are shared with the
-    /// Magic Wand and Paint Bucket).
+    /// Magic Eraser opacity % (tolerance, anti-alias and contiguous are shared with the Magic Wand
+    /// and Paint Bucket).
     pub magic_eraser_opacity: f32,
     /// Background Eraser: sampling (continuous | once | backgroundSwatch), limits (discontiguous |
     /// contiguous | findEdges), tolerance % and Protect Foreground Color.
@@ -736,6 +815,10 @@ fn default_marquee_style() -> String {
     "normal".into()
 }
 
+fn default_marquee_unit() -> String {
+    "pixels".into()
+}
+
 fn one() -> f32 {
     1.0
 }
@@ -761,13 +844,60 @@ fn default_eyedropper_sample() -> String {
     "all".into()
 }
 
+/// Each tool's Sample All Layers (the Paint Bucket calls it All Layers). Photoshop keeps one per
+/// tool, all off by default: turning it on for the Magic Wand must not leave Blur or Smudge
+/// copying the composite onto the active layer (#5524). The Mixer Brush keeps its own with the
+/// brush (`MixerSettings`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SampleAllLayers {
+    pub magic_wand: bool,
+    pub quick_selection: bool,
+    pub object_selection: bool,
+    pub paint_bucket: bool,
+    pub magic_eraser: bool,
+    pub spot_healing: bool,
+    pub patch: bool,
+    pub content_aware_move: bool,
+    pub remove: bool,
+    pub blur: bool,
+    pub sharpen: bool,
+    pub smudge: bool,
+}
+
+impl SampleAllLayers {
+    /// `tool`'s setting; false for a tool without the option.
+    pub fn get(mut self, tool: Tool) -> bool {
+        self.slot(tool).is_some_and(|v| *v)
+    }
+
+    /// `tool`'s setting, or `None` for a tool without the option.
+    pub fn slot(&mut self, tool: Tool) -> Option<&mut bool> {
+        Some(match tool {
+            Tool::MagicWand => &mut self.magic_wand,
+            Tool::QuickSelection => &mut self.quick_selection,
+            Tool::ObjectSelection => &mut self.object_selection,
+            Tool::PaintBucket => &mut self.paint_bucket,
+            Tool::MagicEraser => &mut self.magic_eraser,
+            Tool::SpotHealing => &mut self.spot_healing,
+            Tool::Patch => &mut self.patch,
+            Tool::ContentAwareMove => &mut self.content_aware_move,
+            Tool::Remove => &mut self.remove,
+            Tool::Blur => &mut self.blur,
+            Tool::Sharpen => &mut self.sharpen,
+            Tool::Smudge => &mut self.smudge,
+            _ => return None,
+        })
+    }
+}
+
 impl Default for ToolOptions {
     fn default() -> Self {
         Self {
             tolerance: 32.0,
             contiguous: true,
             anti_alias: true,
-            sample_all_layers: false,
+            sample_all: SampleAllLayers::default(),
             object_finder: true,
             remove_new_layer: false,
             remove_after_each_stroke: true,
@@ -820,6 +950,7 @@ impl Default for ToolOptions {
             marquee_style: default_marquee_style(),
             marquee_width: 1.0,
             marquee_height: 1.0,
+            marquee_unit: default_marquee_unit(),
             move_auto_select: true,
             move_target: default_move_target(),
             move_show_transform: false,
@@ -971,6 +1102,10 @@ pub enum MadeLayer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub layer: u64,
+    /// Id of the document being edited (layer ids can repeat across documents, e.g. one .pcraft
+    /// opened twice). `None`: the active document.
+    #[serde(default)]
+    pub document: Option<u64>,
     pub caret: usize,
     pub anchor: usize,
     /// History coalescing key: the whole editing session is one "Edit Type Layer" step.
@@ -1048,6 +1183,15 @@ pub struct DockTabs {
     pub brushes: usize,
 }
 
+/// Sliders under the Color panel's field: hue/saturation/brightness or red/green/blue (#7172).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ColorPanelSliderMode {
+    #[default]
+    Hsb,
+    Rgb,
+}
+
 /// Color panel state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1057,6 +1201,9 @@ pub struct ColorPanelState {
     /// Color Picker › Only Web Colors, kept across opens like Photoshop (#4995).
     #[serde(default)]
     pub web_only: bool,
+    /// HSB or RGB sliders under the colour field (#7172).
+    #[serde(default)]
+    pub slider_mode: ColorPanelSliderMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1170,6 +1317,12 @@ pub struct UiState {
     /// Layers panel kind filter ("pixel", "adjustment", "type", "shape", "smart"); empty = all.
     #[serde(default)]
     pub layer_filter: Vec<String>,
+    /// Thumbnail dimensions, content cropping and filter-strip visibility.
+    #[serde(default)]
+    pub layers_panel_options: LayersPanelOptions,
+    /// Transient dialog; never restored with a workspace.
+    #[serde(skip)]
+    pub layers_panel_dialog: Option<LayersPanelDialog>,
     /// Layers panel filter type (#5048): kind (above), name or blend mode.
     #[serde(default)]
     pub layer_filter_by: crate::layer_filter_ui::FilterBy,
@@ -1349,6 +1502,8 @@ impl Default for UiState {
             artboard_tool: Default::default(),
             shell: Default::default(),
             layer_filter: Vec::new(),
+            layers_panel_options: LayersPanelOptions::default(),
+            layers_panel_dialog: None,
             layer_filter_by: Default::default(),
             layer_filter_name: String::new(),
             layer_filter_mode: default_layer_filter_mode(),
@@ -1443,6 +1598,25 @@ impl UiState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_all_layers_is_per_tool_and_old_prefs_load() {
+        // The single shared flag of older preferences is dropped: every tool starts off (#5524).
+        let o: ToolOptions = serde_json::from_str(r#"{"sample_all_layers": true, "feather": 3.0}"#).unwrap();
+        assert_eq!((o.sample_all, o.feather), (SampleAllLayers::default(), 3.0));
+        let mut o = ToolOptions::default();
+        o.sample_all.magic_wand = true;
+        let back: ToolOptions = serde_json::from_value(serde_json::to_value(&o).unwrap()).unwrap();
+        assert!(back.sample_all.magic_wand && !back.sample_all.get(Tool::Blur));
+        assert!(!back.sample_all.get(Tool::Brush), "a tool without the option reads false");
+        let mut s = SampleAllLayers::default();
+        assert!(s.slot(Tool::Brush).is_none());
+        for t in [Tool::MagicWand, Tool::PaintBucket, Tool::Blur, Tool::Sharpen, Tool::Smudge, Tool::Remove] {
+            *s.slot(t).unwrap() = true;
+            assert!(s.get(t), "{t:?}");
+        }
+        assert!(!s.get(Tool::QuickSelection));
+    }
 
     #[test]
     fn tool_names_parse() {
