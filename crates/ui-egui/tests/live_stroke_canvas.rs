@@ -235,3 +235,66 @@ fn refine_edge_brush_stays_visible_above_the_canvas_with_live_tools() {
         }
     }
 }
+
+/// Deferred live-tool painting uses the camera changed by this frame's navigation input.
+#[test]
+fn live_tool_camera_navigation_is_visible_in_the_input_frame() {
+    use photocraft_ui_egui::state::Tool;
+    let _gpu = photocraft_testkit::gpu_lock();
+    for flip in [false, true] {
+        for tool in [Tool::Brush, Tool::MixerBrush] {
+            for zoom in [false, true] {
+                let Some(mut h) = harness() else { return };
+                let app = h.state_mut();
+                app.run("file.new", json!({"width":300,"height":200,"background":"white"})).unwrap();
+                app.run("paint.stroke", json!({"points":[[40,40],[240,160]],"size":30,"hardness":1.0,"color":"#2050df"})).unwrap();
+                app.run("prefs.set", json!({"values":{"tools.overscroll":true,"interface.enableAnimations":false,"general.zoomWithScrollWheel":false}}))
+                    .unwrap();
+                app.ui.tool = tool;
+                app.ui.view.flip_horizontal = flip;
+                app.sync_views();
+                h.run_steps(4);
+                control(&mut h, "ui.set", json!({"zoom":1.0,"center":[150,100]}));
+                let at = h.state().last_canvas_rect.center() + egui::vec2(30.0, 10.0);
+                h.hover_at(at);
+                h.run_steps(2);
+                let before = h.state().ui.views[0].clone();
+                h.input_mut().events.push(if zoom {
+                    egui::Event::Zoom(1.25)
+                } else {
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(30.0, 20.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    }
+                });
+                h.step();
+                let moved = h.state().ui.views[0].clone();
+                assert!(if zoom { moved.zoom != before.zoom } else { moved.center != before.center }, "navigation was applied");
+                let immediate = h.render().unwrap();
+                let rect = h.state().last_canvas_rect.shrink(8.0);
+                h.step();
+                let settled = h.render().unwrap();
+                if tool == Tool::MixerBrush
+                    && flip
+                    && zoom
+                    && let Ok(path) = std::env::var("PHOTOCRAFT_NAV_SNAPSHOT")
+                {
+                    settled.save(path).unwrap();
+                }
+                assert_eq!(h.state().ui.views[0].zoom, moved.zoom);
+                assert_eq!(h.state().ui.views[0].center, moved.center);
+                let mut diff = 0;
+                for y in rect.top() as u32..rect.bottom() as u32 {
+                    for x in rect.left() as u32..rect.right() as u32 {
+                        for (a, b) in immediate.get_pixel(x, y).0.into_iter().zip(settled.get_pixel(x, y).0) {
+                            diff = diff.max(a.abs_diff(b));
+                        }
+                    }
+                }
+                assert!(diff <= 1, "{tool:?} flip={flip} zoom={zoom}: canvas changes {diff}/255 one frame after navigation");
+            }
+        }
+    }
+}
