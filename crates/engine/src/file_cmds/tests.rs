@@ -1081,6 +1081,69 @@ fn flatten_all_layer_effects_keeps_a_pattern_overlay() {
 }
 
 #[test]
+fn layers_to_files_reports_skipped_layers_without_changing_files() {
+    for depth in [8, 16, 32] {
+        let dir = tmp(&format!("skipped-layers-{depth}"));
+        let mut s = session(4, 4, depth);
+        let adjustment = s.execute("layer.newAdjustmentLayer.levels", json!({})).unwrap()["layer"].clone();
+        s.execute("layer.setProps", json!({"name": "Levels/α"})).unwrap();
+        let hidden = s.execute("layer.new.layer", json!({"name": "Levels/α"})).unwrap()["layer"].clone();
+        s.execute("layer.setProps", json!({"visible": false})).unwrap();
+        let before = s.active().unwrap().doc.clone();
+        let result = s.execute("file.export.layersToFiles", json!({"dir": dir, "prefix": "doc"})).unwrap();
+        assert_eq!(
+            result["skipped"],
+            json!([
+                {"layer": hidden, "name": "Levels/α", "reason": "hidden by visibleOnly"},
+                {"layer": adjustment, "name": "Levels/α", "reason": "adjustment layer has no pixels of its own"}
+            ])
+        );
+        assert_eq!(result["files"], json!([join(&dir, "doc_0001_Background.png")]));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(s.active().unwrap().doc.layers.len(), before.layers.len());
+        assert!(!s.active().unwrap().doc.layer(LayerId(hidden.as_u64().unwrap())).unwrap().visible);
+        let all = s.execute("file.export.layersToFiles", json!({"dir": dir, "prefix": "all", "visibleOnly": false})).unwrap();
+        assert_eq!(
+            all["skipped"],
+            json!([
+                {"layer": adjustment, "name": "Levels/α", "reason": "adjustment layer has no pixels of its own"}
+            ])
+        );
+        assert_eq!(all["files"], json!([join(&dir, "all_0000_Levels_α.png"), join(&dir, "all_0002_Background.png")]));
+    }
+}
+
+#[test]
+fn layers_to_files_reports_groups_as_exports_and_failures_as_errors() {
+    let mut s = session(4, 4, 8);
+    s.execute("layer.newAdjustmentLayer.levels", json!({})).unwrap();
+    s.execute("layer.new.groupFromLayers", json!({"name": "Pack"})).unwrap();
+    let params = json!({"prefix": "doc"});
+    let mut names = Vec::new();
+    let report = export_layers_report_with(&s, &params, |name, bytes| {
+        assert!(!bytes.is_empty());
+        names.push(name.to_string());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(names, vec!["doc_0000_Pack.png", "doc_0001_Background.png"]);
+    assert_eq!(report.files, names);
+    assert!(report.skipped.is_empty(), "a group's adjustment is not an omitted top-level layer");
+    assert_eq!(export_layers_with(&s, &params, |_, _| Ok(())).unwrap(), names, "legacy Rust helper remains compatible");
+    assert!(export_layers_report_with(&s, &params, |_, _| Err(EngineError::Other("disk full".into()))).unwrap_err().to_string().contains("disk full"));
+    assert!(export_layers_report_with(&s, &json!({"format": "not-a-format"}), |_, _| panic!("must not write")).is_err());
+    assert!(export_layers_report_with(&Session::new(), &params, |_, _| panic!("must not write")).is_err());
+    s.edit("Empty", |doc, _| {
+        doc.layers.clear();
+        Ok(())
+    })
+    .unwrap();
+    let empty = export_layers_report_with(&s, &params, |_, _| panic!("must not write")).unwrap();
+    assert!(empty.files.is_empty());
+    assert!(empty.skipped.is_empty());
+}
+
+#[test]
 fn layers_to_files_writes_each_visible_layer() {
     let dir = tmp("layers");
     let mut s = session(12, 12, 8);

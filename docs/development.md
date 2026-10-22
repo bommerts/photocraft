@@ -260,6 +260,16 @@ Tools:
 - `jobs_list` (running background jobs with progress, then recently finished ones with their result or error), `jobs_cancel` (one job by id, or every running job)
 - bridge only: `ui_inspect`, `ui_screenshot`, `ui_pointer`, `ui_menu_invoke`, `ui_set`, `control_call`
 
+`doc_export_layers` in workspace headless mode returns `{files, count, skipped}`. `count` is
+only the number of files written. Each skipped top-level layer is reported as
+`{layer, name, reason}` (session id, original name, explanation); `skipped` is `[]` when every
+layer exports. Hidden layers are reported when `visibleOnly` is true (the default), and
+standalone adjustments are reported because they have no pixels of their own. Groups still
+export merged, so their children are not separate skips. Filename numbering is unchanged;
+encoding or write failures remain errors. The engine command and trusted-local exports add
+the same `skipped` array to their existing `{files}` response. See the
+[`doc.exportLayers` protocol entry](control-protocol.md#headless-server) for details.
+
 Claude Code (`.mcp.json` in the repo root, or `claude mcp add`):
 
 ```json

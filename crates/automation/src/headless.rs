@@ -171,10 +171,16 @@ impl Headless {
                 _ => return Err(AutomationError::BadRequest("automation filesystem access is not granted: write authority is absent".into())),
             };
             let mut outputs = workspace.export_sequence(dir)?;
-            let written = file_cmds::export_layers_with(&this.session, params, |name, bytes| {
+            let report = file_cmds::export_layers_report_with(&this.session, params, |name, bytes| {
                 outputs.write(name, bytes).map_err(|e| photocraft_engine::EngineError::Other(e.to_string()))
             });
-            exported(dir, written, &mut outputs)
+            let (written, skipped) = match report {
+                Ok(report) => (Ok(report.files), report.skipped),
+                Err(error) => (Err(error), Vec::new()),
+            };
+            let mut result = exported(dir, written, &mut outputs)?;
+            result["skipped"] = json!(skipped);
+            Ok(result)
         })
     }
 

@@ -725,6 +725,59 @@ mod tests {
     }
 
     #[test]
+    fn doc_export_layers_reports_skips_in_workspace_and_trusted_sessions() {
+        for trusted in [false, true] {
+            let base = std::env::temp_dir().join(format!("pc-export-skips-{}-{trusted}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).unwrap();
+            let mut h =
+                if trusted { Headless::trusted_local() } else { Headless::with_workspace(crate::AuthorizedWorkspace::new(Some(&base), Some(&base)).unwrap()) };
+            h.handle("doc.new", json!({"width": 4, "height": 4, "background": "white", "name": "card"})).unwrap();
+            let adjustment = h.handle("engine.execute", json!({"command": "layer.newAdjustmentLayer.levels"})).unwrap()["layer"].clone();
+            h.handle("engine.execute", json!({"command": "layer.setProps", "params": {"name": "Levels"}})).unwrap();
+            let hidden = h.handle("engine.execute", json!({"command": "layer.new.layer", "params": {"name": "Hidden"}})).unwrap()["layer"].clone();
+            h.handle("engine.execute", json!({"command": "layer.setProps", "params": {"visible": false}})).unwrap();
+            // Exercise the actual JSON-lines serve envelope, not only direct dispatch.
+            let h = Mutex::new(h);
+            let out_dir = base.join("out").to_string_lossy().into_owned();
+            let request = json!({"id": 8491, "method": "doc.exportLayers", "params": {"dir": out_dir}}).to_string() + "\n";
+            let mut output = Vec::new();
+            serve_lines(&h, request.as_bytes(), &mut output).unwrap();
+            let reply: Value = serde_json::from_slice(&output).unwrap();
+            assert_eq!(reply["id"], 8491);
+            assert_eq!(reply["ok"], true, "{reply}");
+            assert_eq!(reply["result"]["files"], json!([format!("{out_dir}/card_0001_Background.png")]));
+            if !trusted {
+                assert_eq!(reply["result"]["count"], 1);
+            }
+            assert_eq!(
+                reply["result"]["skipped"],
+                json!([
+                    {"layer": hidden, "name": "Hidden", "reason": "hidden by visibleOnly"},
+                    {"layer": adjustment, "name": "Levels", "reason": "adjustment layer has no pixels of its own"}
+                ])
+            );
+            assert_eq!(std::fs::read_dir(base.join("out")).unwrap().count(), 1);
+            let mut h = h.into_inner().unwrap();
+            let all_dir = base.join("all").to_string_lossy().into_owned();
+            let all = h.export_layers(None, &all_dir, &json!({"visibleOnly": false})).unwrap();
+            assert_eq!(all["files"].as_array().unwrap().len(), 2);
+            assert_eq!(all["skipped"].as_array().unwrap().len(), 1);
+            // Workspace no-overwrite errors still fail and remove only newly created files.
+            if !trusted {
+                let collision = base.join("collision");
+                std::fs::create_dir_all(&collision).unwrap();
+                std::fs::write(collision.join("card_0002_Background.png"), b"keep").unwrap();
+                assert!(h.export_layers(None, &collision.to_string_lossy(), &json!({"visibleOnly": false})).is_err());
+                assert_eq!(std::fs::read_dir(&collision).unwrap().count(), 1);
+                assert_eq!(std::fs::read(collision.join("card_0002_Background.png")).unwrap(), b"keep");
+            }
+            drop(h);
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
+
+    #[test]
     fn doc_export_layers_writes_only_beneath_the_write_root() {
         let base = std::env::temp_dir().join(format!("pc-doc-export-layers-{}", std::process::id()));
         let root = base.join("workspace");

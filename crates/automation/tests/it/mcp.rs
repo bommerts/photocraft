@@ -768,6 +768,43 @@ async fn doc_exports_and_data_set_import_are_capability_scoped() {
     cleanup(&base);
 }
 
+/// Skipped-layer details survive the MCP tool result, including the all-skipped case.
+#[tokio::test(flavor = "multi_thread")]
+async fn doc_export_layers_reports_skipped_layers() {
+    let base = tmp("skipped-layers");
+    let client = connect(headless_in(&base)).await;
+    json_of(&call(&client, "doc_new", json!({"width": 4, "height": 4, "background": "white", "name": "card"})).await);
+    let background = json_of(&call(&client, "doc_inspect", json!({})).await)["layers"][0]["id"].clone();
+    let adjustment = json_of(&call(&client, "command_run", json!({"id": "layer.newAdjustmentLayer.levels"})).await)["layer"].clone();
+    json_of(&call(&client, "command_run", json!({"id": "layer.setProps", "params": {"name": "Levels/α"}})).await);
+    let hidden = json_of(&call(&client, "command_run", json!({"id": "layer.new.layer", "params": {"name": "Hidden"}})).await)["layer"].clone();
+    json_of(&call(&client, "command_run", json!({"id": "layer.setProps", "params": {"visible": false}})).await);
+    let result = json_of(&call(&client, "doc_export_layers", json!({"dir": "layers"})).await);
+    assert_eq!(result["count"], 1);
+    assert_eq!(result["files"], json!(["layers/card_0001_Background.png"]));
+    assert_eq!(
+        result["skipped"],
+        json!([
+            {"layer": hidden, "name": "Hidden", "reason": "hidden by visibleOnly"},
+            {"layer": adjustment, "name": "Levels/α", "reason": "adjustment layer has no pixels of its own"}
+        ])
+    );
+    let all = json_of(&call(&client, "doc_export_layers", json!({"dir": "all", "visibleOnly": false})).await);
+    assert_eq!(all["count"], 2);
+    assert_eq!(all["skipped"].as_array().unwrap().len(), 1);
+    assert_eq!(std::fs::read_dir(base.join("layers")).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(base.join("all")).unwrap().count(), 2);
+    // Every top-level layer is still accounted for when none can be exported.
+    json_of(&call(&client, "command_run", json!({"id": "layer.setProps", "params": {"layer": background, "visible": false}})).await);
+    let none = json_of(&call(&client, "doc_export_layers", json!({"dir": "none"})).await);
+    assert_eq!(none["files"], json!([]));
+    assert_eq!(none["count"], 0);
+    assert_eq!(none["skipped"].as_array().unwrap().len(), 3);
+    assert_eq!(std::fs::read_dir(base.join("none")).unwrap().count(), 0);
+    client.cancel().await.unwrap();
+    cleanup(&base);
+}
+
 /// The template workflow stays in memory, including saving nested contents back to the parent.
 #[tokio::test(flavor = "multi_thread")]
 async fn embedded_smart_objects_can_be_edited_saved_and_unpacked_without_file_authority() {
