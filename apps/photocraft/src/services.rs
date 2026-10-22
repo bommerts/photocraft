@@ -17,12 +17,12 @@ use std::sync::Arc;
 mod recovery_tests;
 
 /// Everything File › Open reads: PhotoCraft, Photoshop, OpenRaster, Krita and Affinity documents, flat images, and
-/// Photoshop brushes (.abr), gradients (.grd), swatches (.aco, .ase) and keyboard shortcut sets
+/// Photoshop brushes (.abr), gradients (.grd), swatches (.aco, .act, .ase) and keyboard shortcut sets
 /// (.kys), which go to the preset libraries and Edit › Keyboard Shortcuts.
 const OPEN_EXTS: &[&str] = &[
-    "pcraft", "pdn", "ora", "kra", "krz", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico", "qoi", "exr", "hdr",
-    "pbm", "pgm", "ppm", "pam", "pfm", "pcx", "dds", "xpm", "fits", "fit", "fts", "dpx", "cin", "heic", "heif", "hif", "dng", "cr2", "cr3", "nef", "nrw",
-    "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco", "ase", "kys", "af", "afdesign", "afphoto", "afpub",
+    "pcraft", "pdn", "ora", "xcf", "xcfgz", "gz", "kra", "krz", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico",
+    "qoi", "exr", "hdr", "pbm", "pgm", "ppm", "pam", "pfm", "pcx", "dds", "xpm", "fits", "fit", "fts", "dpx", "cin", "heic", "heif", "hif", "dng", "cr2",
+    "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco", "act", "ase", "kys", "af", "afdesign", "afphoto", "afpub",
 ];
 const SVG_EXTS: &[&str] = &["svg", "svgz"];
 
@@ -45,6 +45,7 @@ const OPEN_FILTERS: &[(&str, &[&str])] = &[
     ("Photoshop", &["psd", "psb", "psdt"]),
     ("Affinity", &["af", "afdesign", "afphoto", "afpub"]),
     ("Krita", &["kra", "krz"]),
+    ("GIMP", &["xcf", "xcfgz", "gz"]),
     ("OpenRaster", &["ora"]),
     ("Paint.NET", &["pdn"]),
     ("SVG", SVG_EXTS),
@@ -69,7 +70,7 @@ const OPEN_FILTERS: &[(&str, &[&str])] = &[
     ("Camera Raw", &["dng", "cr2", "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf"]),
     ("Brushes", &["abr"]),
     ("Gradients", &["grd"]),
-    ("Swatches", &["aco", "ase"]),
+    ("Swatches", &["aco", "act", "ase"]),
     ("Keyboard Shortcuts", &["kys"]),
 ];
 
@@ -105,7 +106,7 @@ const SAVE_FILTERS: &[(&str, &[&str])] = &[
 
 /// Non-document files the shell saves (Swatches panel exports): offered alone, so the dialog
 /// never swaps their extension for a document format's.
-const OTHER_SAVE_FILTERS: &[(&str, &[&str])] = &[("Color Swatches", &["aco"]), ("Swatch Exchange", &["ase"])];
+const OTHER_SAVE_FILTERS: &[(&str, &[&str])] = &[("Color Swatches", &["aco"]), ("Color Table", &["act"]), ("Swatch Exchange", &["ase"])];
 
 /// Lists the save dialog's file types with the `suggested` type first (added if unlisted), so the dialog keeps that extension instead of .psd.
 fn save_filters(suggested: &str) -> Vec<(String, Vec<String>)> {
@@ -386,12 +387,13 @@ fn with_store<R>(store: &SharedRecovery, f: impl FnOnce(&mut RecoveryStore) -> R
 fn recovery_services(dir: Option<PathBuf>) -> Services {
     let recover_dir = dir.clone();
     let store: SharedRecovery = Rc::new(RefCell::new(dir.map(RecoveryStore::new)));
-    let (s1, s2, s4) = (store.clone(), store.clone(), store.clone());
+    let (s1, s2, s4, s5) = (store.clone(), store.clone(), store.clone(), store.clone());
     Services {
         autosave: Some(Box::new(move |doc: &Arc<Document>, revision: u64, path: Option<&str>| {
             with_store(&s1, |s| s.autosave_checked(doc, revision, path.map(str::to_string)))?
         })),
         autosave_results: Some(Box::new(move || with_store(&s4, |s| s.take_completed()).unwrap_or_default())),
+        flush_autosaves: Some(Box::new(move || with_store(&s5, RecoveryStore::flush).unwrap_or_default())),
         discard_autosave: Some(Box::new(move |id: u64| {
             let _ = with_store(&s2, |s| s.discard(id));
         })),
@@ -830,6 +832,9 @@ mod tests {
         assert!(!globs.iter().any(|glob| matches(glob, "txt")));
         let svg_filter = open_filters().into_iter().find(|(name, _)| *name == "SVG").map(|(_, exts)| exts).unwrap_or_default();
         assert_eq!(svg_filter, open_filter_extensions(SVG_EXTS));
+        let psd_filter = open_filters().into_iter().find(|(name, _)| *name == "Photoshop").map(|(_, exts)| exts).unwrap_or_default();
+        assert_eq!(psd_filter, open_filter_extensions(&["psd", "psb", "psdt"]));
+        assert!(psd_filter.iter().any(|glob| matches(glob, "psd")) && psd_filter.iter().any(|glob| matches(glob, "PSD")));
         assert!(svg_filter.iter().any(|glob| matches(glob, "svg")) && svg_filter.iter().any(|glob| matches(glob, "svgz")));
     }
 
@@ -859,6 +864,10 @@ mod tests {
         assert_eq!(open_filter_extensions(OPEN_EXTS), OPEN_EXTS);
         assert_eq!(open_filter_extensions(&["pcraft"]), ["pcraft"]);
         assert_eq!(open_filters().into_iter().find(|(name, _)| *name == "SVG").map(|(_, exts)| exts), Some(vec!["svg".to_string(), "svgz".to_string()]));
+        assert_eq!(
+            open_filters().into_iter().find(|(name, _)| *name == "Photoshop").map(|(_, exts)| exts),
+            Some(vec!["psd".to_string(), "psb".to_string(), "psdt".to_string()])
+        );
     }
 
     #[test]

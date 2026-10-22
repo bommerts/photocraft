@@ -32,12 +32,21 @@ pub struct TySh {
     pub bounds: [f32; 4],
 }
 
+/// Whether a type transform can reach rendering or egui. Pixel coordinates use i32 throughout
+/// the document, so non-finite and unrepresentable affine terms are rejected (#4758).
+pub fn transform_is_safe(t: &Affine) -> bool {
+    t.m.iter().all(|v| v.is_finite() && v.abs() <= f64::from(i32::MAX))
+}
+
 /// Parses a `TySh` block.
 pub fn parse_tysh(data: &[u8]) -> Option<TySh> {
     let f = |at: usize| data.get(at..at + 8).map(|b| f64::from_be_bytes(b.try_into().unwrap_or([0; 8])));
     let mut m = [0.0; 6];
     for (i, v) in m.iter_mut().enumerate() {
         *v = f(2 + i * 8)?;
+    }
+    if !transform_is_safe(&Affine { m }) {
+        return None;
     }
     let (text, used) = VersionedDescriptor::parse_prefix(data.get(52..)?).ok()?;
     let rest = data.get(52 + used..).unwrap_or(&[]);
@@ -1660,6 +1669,25 @@ pub fn build_tysh(layer: &TextLayer, dpi: f32, ink: Option<[f32; 4]>) -> Vec<u8>
     let warped = warp.as_ref().is_some_and(|w| enum_value(w, "warpStyle").is_some_and(|s| s != "warpNone"));
     let bounds = if warped { [l, t, r, b] } else { [0.0; 4] };
     write_tysh(&TySh { transform: layer.transform, text, warp, bounds })
+}
+
+#[cfg(test)]
+mod transform_safety_tests {
+    use super::*;
+
+    #[test]
+    fn unsafe_affine_terms_are_not_editable_type() {
+        let mut t = TySh { transform: Affine::IDENTITY, text: Descriptor::new("TxLr"), warp: None, bounds: [0.0; 4] };
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.315776645269349e62, 1.4759871577491642e307] {
+            for i in 0..6 {
+                t.transform = Affine::IDENTITY;
+                t.transform.m[i] = bad;
+                assert!(parse_tysh(&write_tysh(&t)).is_none(), "term {i}: {bad}");
+            }
+        }
+        t.transform = Affine { m: [0.0, -2.01242653341062, 2.286521576443544, 0.0, 586.63, 2452.60] };
+        assert_eq!(parse_tysh(&write_tysh(&t)).unwrap().transform, t.transform);
+    }
 }
 
 #[cfg(test)]

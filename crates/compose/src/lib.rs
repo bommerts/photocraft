@@ -689,11 +689,33 @@ fn render_reduced_with(doc: &Document, b: Rect, w: u32, h: u32, damage: Option<R
         });
         debug_assert!(ok.is_ok());
     }
-    for (i, p) in acc.iter_mut().enumerate() {
-        let ((x0, x1), (y0, y1)) = (span(ox0 + i % ow, fw, w), span(oy0 + i / ow, fh, h));
-        let n = ((y1 - y0) * (x1 - x0)).max(1) as f32;
-        let a = p[3];
-        *p = if a > 0.0 { [p[0] / a, p[1] / a, p[2] / a, a / n] } else { [0.0; 4] };
+    let col_w: Vec<usize> = (0..ow)
+        .map(|x| {
+            let (x0, x1) = span(ox0 + x, fw, w);
+            (x1 - x0).max(1)
+        })
+        .collect();
+    let norm_row = |row: usize, out: &mut [[f32; 4]]| {
+        let (y0, y1) = span(oy0 + row, fh, h);
+        let rh = (y1 - y0).max(1);
+        for (p, &cw) in out.iter_mut().zip(&col_w) {
+            let a = p[3];
+            if a > 0.0 {
+                let n = (rh * cw) as f32;
+                *p = [p[0] / a, p[1] / a, p[2] / a, a / n];
+            } else {
+                *p = [0.0; 4];
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        acc.par_chunks_mut(ow).enumerate().for_each(|(row, out)| norm_row(row, out));
+    }
+    #[cfg(target_arch = "wasm32")]
+    for (row, out) in acc.chunks_mut(ow).enumerate() {
+        norm_row(row, out);
     }
     Buffer { rect: out, px: acc }
 }
@@ -1144,9 +1166,7 @@ pub fn relayout_damage(a: &Document, b: &Document) -> Rect {
 }
 
 /// The bounding box of a shape layer's path and stroke, ignoring its Density and Feather: its
-/// path control bounds plus stroke width. It is the frame Free Transform and the Move tool's
-/// transform controls show for a soft shape, whose rendering reaches past it (in Photoshop a
-/// shape's transform frame follows its path whatever its mask Density and Feather).
+/// path control bounds plus stroke width (a conservative reach for any alignment, cap and join).
 pub fn hard_shape_bounds(sh: &photocraft_doc::ShapeLayer) -> Option<Rect> {
     if sh.fill.is_none() && sh.stroke.as_ref().is_none_or(|s| s.width <= 0.0 || s.opacity <= 0.0) {
         return None;
@@ -1154,6 +1174,75 @@ pub fn hard_shape_bounds(sh: &photocraft_doc::ShapeLayer) -> Option<Rect> {
     let (x0, y0, x1, y1) = sh.path.control_bounds()?;
     let stroke_margin = sh.stroke.as_ref().filter(|s| s.opacity > 0.0).map_or(0.0, |s| s.width.ceil()) as i32;
     let r = Rect::new(x0.floor() as i32, y0.floor() as i32, x1.ceil() as i32, y1.ceil() as i32).inflate(stroke_margin);
+    (!r.is_empty()).then_some(r)
+}
+
+/// The frame Free Transform, the Move tool's transform controls, snapping and Properties show for
+/// a soft shape (Density below 100 % or a Feather), whose rendering reaches past its path: the
+/// pixels the same shape renders in `format` over `canvas` at full Density without Feather, so
+/// the frame is exactly the hard shape's whatever the stroke's alignment, cap and join (in
+/// Photoshop a shape's transform frame follows its path and stroke whatever its mask Density and
+/// Feather, #5846). An inverted path's frame is its own outline, not the whole canvas. Renders
+/// only the strips along the edges of the rasterizers' (1 px conservative) bounds.
+pub fn soft_shape_frame(sh: &photocraft_doc::ShapeLayer, format: photocraft_color::PixelFormat, canvas: Rect) -> Option<Rect> {
+    let mut path = sh.path.clone();
+    path.inverted = false;
+    let hard = photocraft_doc::ShapeLayer { density: 1.0, feather: 0.0, path, fill: sh.fill.clone(), stroke: sh.stroke.clone(), ..Default::default() };
+    let shape = photocraft_vector::CompiledShape::new(&hard, photocraft_vector::DEFAULT_TOLERANCE, canvas);
+    let r = shape.bounds()?.intersect(&canvas);
+    trim_to_painted(r, |strip| shape.render(format, strip).content_bounds())
+}
+
+/// `r` shrunk to the pixels `painted` reports (the painted bounds within a strip of `r`, empty if
+/// none), looking in from each edge through strips that double in thickness: a few renders per
+/// edge however wide the empty margin (a subtracted or intersected subpath can leave most of the
+/// rasterizers' bounds empty), and none of `r`'s inside rendered at once.
+fn trim_to_painted(mut r: Rect, mut painted: impl FnMut(Rect) -> Rect) -> Option<Rect> {
+    // Top: the first strip holding paint gives the first painted row.
+    let mut t = 1;
+    while !r.is_empty() {
+        let strip = Rect::new(r.x0, r.y0, r.x1, r.y0.saturating_add(t).min(r.y1));
+        let p = painted(strip).intersect(&strip);
+        if !p.is_empty() {
+            r.y0 = p.y0;
+            break;
+        }
+        r.y0 = strip.y1;
+        t = t.saturating_mul(2);
+    }
+    let mut t = 1;
+    while !r.is_empty() {
+        let strip = Rect::new(r.x0, r.y1.saturating_sub(t).max(r.y0), r.x1, r.y1);
+        let p = painted(strip).intersect(&strip);
+        if !p.is_empty() {
+            r.y1 = p.y1;
+            break;
+        }
+        r.y1 = strip.y0;
+        t = t.saturating_mul(2);
+    }
+    let mut t = 1;
+    while !r.is_empty() {
+        let strip = Rect::new(r.x0, r.y0, r.x0.saturating_add(t).min(r.x1), r.y1);
+        let p = painted(strip).intersect(&strip);
+        if !p.is_empty() {
+            r.x0 = p.x0;
+            break;
+        }
+        r.x0 = strip.x1;
+        t = t.saturating_mul(2);
+    }
+    let mut t = 1;
+    while !r.is_empty() {
+        let strip = Rect::new(r.x1.saturating_sub(t).max(r.x0), r.y0, r.x1, r.y1);
+        let p = painted(strip).intersect(&strip);
+        if !p.is_empty() {
+            r.x1 = p.x1;
+            break;
+        }
+        r.x1 = strip.x0;
+        t = t.saturating_mul(2);
+    }
     (!r.is_empty()).then_some(r)
 }
 
@@ -1838,6 +1927,27 @@ fn composite_layer_plain(layer: &Layer, clipped: &[Layer], backdrop: &mut Buffer
             p[3] *= mask_k(&mask, i);
         }
         blend_into_fill(backdrop, &content, layer.blend, layer.opacity, layer.fill_opacity, 1.0);
+        return;
+    }
+    if !matches!(layer.content, LayerContent::Group(_) | LayerContent::Fill(_) | LayerContent::Adjustment(_))
+        && let Some(s) = layer.surface()
+        && layer.blend == BlendMode::Normal
+        && opacity >= 1.0
+        && !clipped.iter().any(|c| c.visible)
+        && layer.mask.is_none()
+        && layer.vector_mask.is_none()
+        && text_gamma(layer) == 1.0
+        && !psblend::LAB_MIX.with(|l| l.get())
+        && backdrop.px.iter().all(|p| p[3] <= 0.0)
+    {
+        s.read_rgba_into(rect, &mut backdrop.px);
+        for p in &mut backdrop.px {
+            if p[3] <= 0.0 {
+                *p = [0.0; 4];
+            } else if p[3] < 1.0 {
+                *p = psblend::composite_normal_rgb([0.0; 4], *p, 1.0);
+            }
+        }
         return;
     }
     if clipped.is_empty()

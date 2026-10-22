@@ -305,3 +305,54 @@ fn every_menu_row_starts_its_label_after_one_checkmark_column() {
     });
     out.textures_delta.clear();
 }
+
+/// The whole app (shortcuts, dialogs and the menu bar), for keys other handlers see first.
+fn whole_app() -> Harness<'static, PhotocraftApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).with_max_steps(16).build_eframe(|cc| {
+        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+        app()
+    });
+    h.run_steps(4);
+    h
+}
+
+/// `key` pressed and released with `mods` held, as the platform reports a chord.
+fn chord(h: &mut Harness<'static, PhotocraftApp>, key: egui::Key, mods: egui::Modifiers) {
+    h.event_modifiers(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods }, mods);
+    h.event_modifiers(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: mods }, mods);
+    h.run_steps(2);
+}
+
+fn alt_down(h: &mut Harness<'static, PhotocraftApp>, mods: egui::Modifiers) {
+    h.event_modifiers(egui::Event::Key { key: egui::Key::AltLeft, physical_key: None, pressed: true, repeat: false, modifiers: mods }, mods);
+    h.run_steps(2);
+}
+
+fn alt_up(h: &mut Harness<'static, PhotocraftApp>) {
+    h.event_modifiers(
+        egui::Event::Key { key: egui::Key::AltLeft, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE },
+        egui::Modifiers::NONE,
+    );
+    h.run_steps(3);
+}
+
+/// #7481: Alt held through a shortcut is no tap, even when the shortcut consumed its key before
+/// the bar saw it. Ctrl+Alt+I opens Image Size; releasing Alt leaves the keyboard where it was,
+/// so Enter confirms the dialog instead of opening File. A lone tap still puts it on the bar.
+#[test]
+fn alt_held_through_a_shortcut_does_not_put_the_keyboard_on_the_bar() {
+    let mut h = whole_app();
+    alt_down(&mut h, egui::Modifiers::ALT);
+    chord(&mut h, egui::Key::I, egui::Modifiers::CTRL | egui::Modifiers::ALT | egui::Modifiers::COMMAND);
+    alt_up(&mut h);
+    assert_eq!(h.state().ui.dialogs.len(), 1, "Image Size opened");
+    assert_eq!(Keys::current(&h.ctx).focus, None, "the bar did not take the keyboard");
+    h.key_press(egui::Key::Enter);
+    h.run_steps(4);
+    assert!(!is_open(&h.ctx), "Enter opened no menu");
+    assert!(h.state().ui.dialogs.is_empty(), "Enter confirmed Image Size");
+
+    alt_down(&mut h, egui::Modifiers::ALT);
+    alt_up(&mut h);
+    assert_eq!(Keys::current(&h.ctx).focus, Some(0), "a lone tap still focuses the bar");
+}

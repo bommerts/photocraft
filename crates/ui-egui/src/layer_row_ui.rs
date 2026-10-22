@@ -33,6 +33,7 @@ pub enum Indicator {
     Lock,
     FxTriangle,
     Fx,
+    SmartFilters,
     Link,
     Blend,
 }
@@ -42,6 +43,8 @@ pub enum Indicator {
 pub struct RowRects {
     pub layer: u64,
     pub row: Rect,
+    /// Visible layer thumbnail; None when thumbnails are disabled.
+    pub thumbnail: Option<Rect>,
     /// The name as painted (after truncation); `None` when there was no room for it.
     pub name: Option<Rect>,
     pub indicators: Vec<(Indicator, Rect)>,
@@ -74,8 +77,15 @@ pub fn reserved_width(l: &Layer) -> f32 {
     if l.locks.any() {
         w += ICON_W + GAP;
     }
+    let smart = crate::smart_ui::has_filters(l);
+    if !l.effects.items.is_empty() || smart {
+        w += TRIANGLE_W + GAP;
+    }
     if !l.effects.items.is_empty() {
-        w += TRIANGLE_W + 1.0 + 13.0 + GAP;
+        w += 13.0 + GAP;
+    }
+    if smart {
+        w += ICON_W + GAP;
     }
     if l.link_group.is_some() {
         w += ICON_W + GAP;
@@ -130,6 +140,7 @@ pub fn indicators(
     let fx_font = theme::semibold(11.0);
     let blend_font = FontId::proportional(10.5);
     let has_fx = !l.effects.items.is_empty();
+    let has_smart = crate::smart_ui::has_filters(l);
     let show_blend = l.blend != BlendMode::Normal && l.blend != BlendMode::PassThrough;
     let fx_galley = has_fx.then(|| painter.layout_no_wrap("fx".into(), fx_font, t.text_dim));
     let blend_galley = show_blend.then(|| painter.layout_no_wrap(tl!(l.blend.label()).into(), blend_font, t.text_faint));
@@ -137,8 +148,13 @@ pub fn indicators(
     if locked {
         items.push((Indicator::Lock, ICON_W));
     }
-    if let Some(g) = &fx_galley {
+    if has_fx || has_smart {
         items.push((Indicator::FxTriangle, TRIANGLE_W));
+    }
+    if has_smart {
+        items.push((Indicator::SmartFilters, ICON_W));
+    }
+    if let Some(g) = &fx_galley {
         items.push((Indicator::Fx, g.size().x));
     }
     if l.link_group.is_some() {
@@ -164,6 +180,11 @@ pub fn indicators(
                     painter.galley(pos2(r.left(), cy - g.size().y / 2.0), g, t.text_faint);
                 }
             }
+            Indicator::SmartFilters => {
+                let enabled = matches!(&l.content, photocraft_doc::LayerContent::Smart(sm) if sm.filters_enabled);
+                crate::smart_ui::paint_badge(painter, r.center(), if enabled { t.icon } else { t.text_faint });
+                ui.interact(r, ui.id().with(("smart-filters-badge", l.id.0)), Sense::hover()).on_hover_text(tl!("Smart Filters"));
+            }
             Indicator::FxTriangle => {
                 let resp = ui.interact(r, ui.id().with(("fx-disclosure", l.id.0)), Sense::click());
                 paint_triangle(painter, r.center(), fx_open, if resp.hovered() { t.text } else { t.icon });
@@ -173,7 +194,11 @@ pub fn indicators(
                     actions.push(("layer.setEffectsExpanded".into(), json!({"layer": l.id.0, "expanded": !fx_open, "all": all})));
                 }
                 let (verb, name) = (if fx_open { tl!("Collapse") } else { tl!("Expand") }, l.name.clone());
-                let tip = if fx_open {
+                let tip = if has_smart && fx_open {
+                    tl!("Hide the layer's effects and Smart Filters  ({key}-click: all layers)")
+                } else if has_smart {
+                    tl!("Show the layer's effects and Smart Filters  ({key}-click: all layers)")
+                } else if fx_open {
                     tl!("Hide the layer's effects  ({key}-click: all layers)")
                 } else {
                     tl!("Show the layer's effects  ({key}-click: all layers)")
@@ -206,10 +231,60 @@ pub fn label(painter: &Painter, x: f32, cy: f32, right: f32, text: &str, font: F
     Some(r)
 }
 
-/// The Layers panel's own items at the top of its panel menu (Photoshop's flyout).
+/// Photoshop-style Layers flyout commands. The dock owns tab-group controls, not this menu.
 pub fn panel_menu(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui) {
-    let can = app.session.is_enabled("layer.setExpanded");
-    if ui.add_enabled(can, egui::Button::new(tl!("Collapse All Groups"))).clicked() {
+    use crate::layers_panel_ui::run_menu_command;
+    use crate::state::LayersPanelDialog;
+
+    let has_doc = app.session.active().is_some();
+    if ui.add_enabled(has_doc, egui::Button::new(tl!("New Layer…"))).clicked() {
+        app.ui.layers_panel_dialog = Some(LayersPanelDialog::NewLayer(String::new()));
+        ui.close();
+    }
+    if ui.add_enabled(has_doc, egui::Button::new(tl!("New Group…"))).clicked() {
+        app.ui.layers_panel_dialog = Some(LayersPanelDialog::NewGroup(String::new()));
+        ui.close();
+    }
+    ui.separator();
+    run_menu_command(app, ui, tl!("Flatten Image"), "layer.flattenImage");
+    ui.separator();
+    if ui.add_enabled(app.session.is_enabled("layer.lockLayers"), egui::Button::new(tl!("Lock Layers…"))).clicked() {
+        app.ui.layers_panel_dialog = Some(LayersPanelDialog::LockLayers { transparency: false, pixels: false, position: false, artboard: false, all: true });
+        ui.close();
+    }
+    run_menu_command(app, ui, tl!("Rename Layer…"), "layer.renameLayer");
+    let any_hidden = app.session.active().is_some_and(|st| st.selected_layers().iter().any(|id| st.doc.layer(*id).is_some_and(|l| !l.visible)));
+    if any_hidden {
+        run_menu_command(app, ui, tl!("Show Layers"), "layer.showLayers");
+    } else {
+        run_menu_command(app, ui, tl!("Hide Layers"), "layer.hideLayers");
+    }
+    ui.separator();
+    run_menu_command(app, ui, tl!("New Artboard…"), "layer.new.artboard");
+    ui.separator();
+    ui.menu_button(tl!("Filter Options"), |ui| {
+        let mut show = app.ui.layers_panel_options.show_filters;
+        if ui.checkbox(&mut show, tl!("Show")).changed() {
+            app.ui.layers_panel_options.show_filters = show;
+            crate::layers_panel_ui::persist_options(app);
+            ui.close();
+        }
+    });
+    // Animation Options control Photoshop's frame-unification buttons. PhotoCraft's Layers
+    // panel does not expose those buttons; do not offer nonfunctional toggles.
+    ui.add_enabled_ui(false, |ui| {
+        ui.menu_button(tl!("Animation Options"), |_ui| {});
+    });
+    if ui.button(tl!("Panel Options…")).clicked() {
+        let mut options = app.ui.layers_panel_options.clone();
+        options.thumbnail_contents = crate::layers_panel_ui::thumbnail_contents(app);
+        app.ui.layers_panel_dialog = Some(LayersPanelDialog::PanelOptions(options));
+        ui.close();
+    }
+    ui.separator();
+    // Preserve PhotoCraft's existing group disclosure action when expanding the flyout.
+    let can_collapse = app.session.is_enabled("layer.setExpanded");
+    if ui.add_enabled(can_collapse, egui::Button::new(tl!("Collapse All Groups"))).clicked() {
         if let Err(e) = app.run("layer.setExpanded", json!({"all": true, "expanded": false})) {
             app.ui.status = e;
             app.ui.status_error = true;

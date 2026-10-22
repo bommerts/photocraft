@@ -466,6 +466,33 @@ fn quick_export_never_replaces_the_documents_own_file_unasked() {
     s.execute("prefs.reset", json!({"path": "export"})).unwrap();
 }
 
+/// #8519: Quick Export as PNG renamed to `photo.jpeg` in the save dialog wrote PNG bytes under a
+/// JPEG name, which upload checks refuse. A Quick Export extension picks the format; another
+/// image extension is refused; no extension keeps Export Preferences' format.
+#[test]
+fn quick_export_writes_the_format_its_path_names() {
+    let dir = tmp("quick_ext");
+    let mut s = session(8);
+    s.execute("file.export.exportPreferences", json!({"quickExportFormat": "png"})).unwrap();
+    for (name, format, magic) in [
+        ("a.jpeg", "jpg", &b"\xFF\xD8\xFF"[..]),
+        ("b.JPG", "jpg", b"\xFF\xD8\xFF"),
+        ("c.gif", "gif", b"GIF8"),
+        ("d.webp", "webp", b"RIFF"),
+        ("e", "png", b"\x89PNG"),
+    ] {
+        let path = format!("{dir}/{name}");
+        let r = s.execute("file.export.quickExport", json!({"path": path})).unwrap();
+        assert_eq!(r["format"], json!(format), "{name}");
+        assert!(std::fs::read(&path).unwrap().starts_with(magic), "{name} holds {format} data");
+    }
+    let tif = format!("{dir}/f.tif");
+    let e = s.execute("file.export.quickExport", json!({"path": tif})).unwrap_err().to_string();
+    assert!(e.contains("Export As"), "{e}");
+    assert!(!std::path::Path::new(&tif).exists());
+    s.execute("prefs.reset", json!({"path": "export"})).unwrap();
+}
+
 #[test]
 fn same_file_sees_through_other_names_for_one_file() {
     let dir = tmp("same_file");

@@ -242,7 +242,12 @@ impl Keys {
         }
         let events = ctx.input(|i| i.events.clone());
         let mut tap = false;
-        for e in &events {
+        // The tap is judged on every event of the frame, also those another handler consumed
+        // before the bar's turn: the shortcuts run first, so Ctrl+Alt+I (Image Size) left no
+        // trace in `events`, and releasing Alt counted as a tap that put the keyboard on the bar;
+        // Enter then opened File instead of confirming the dialog (#7481).
+        let raw = ctx.input(|i| i.raw.events.clone());
+        for e in &raw {
             match e {
                 Event::Key { key: Key::AltLeft | Key::AltRight, pressed: true, .. } => {
                     self.alt_down = true;
