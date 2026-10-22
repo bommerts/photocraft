@@ -326,6 +326,7 @@
 	Blending Options…	Opcje mieszania…
 	Bevel & Emboss…	Ukos i płaskorzeźba…
 	Use Global Light	Użyj światła globalnego
+	Overprint	Nadrukowywanie
 	Inner Shadow…	Cień wewnętrzny…
 	Inner Glow…	Poświata wewnętrzna…
 	Satin…	Satyna…
@@ -2137,6 +2138,11 @@
 	Mixer Brush Tool	Narzędzie Pędzel mieszający
 	Color Replacement Tool	Narzędzie Zamiana koloru
 	Wet	Wilgotność
+	Current Brush Load	Bieżący ładunek pędzla
+	Load Brush	Napełnij pędzel
+	Clean Brush	Wyczyść pędzel
+	Load the brush after each stroke	Napełniaj pędzel po każdym pociągnięciu
+	Clean the brush after each stroke	Czyść pędzel po każdym pociągnięciu
 	Mix	Mieszanie
 	Wetness Jitter	Rozrzut wilgotności
 	Mix Jitter	Rozrzut mieszania
@@ -3664,6 +3670,32 @@ cameraData	Lens	Obiektyw
 	Mirror	Odbicie lustrzane
 	Output Settings	Ustawienia wyjścia
 	Output To	Wyjście do
+
+	Animation Options	Opcje animacji
+	Entire Document	Cały dokument
+	Filter Options	Opcje filtrowania
+	Layer Bounds	Granice warstwy
+	Layers Panel Options	Opcje panelu Warstwy
+	New Artboard…	Nowy obszar roboczy…
+	New Group…	Nowa grupa…
+	Prevent Auto-Nesting	Zapobiegaj automatycznemu zagnieżdżaniu
+	Show Layers	Pokaż warstwy
+	Thumbnail Contents	Zawartość miniaturek
+	Thumbnail Size	Rozmiar miniaturek
+	Use Default Masks on Fill Layers	Użyj domyślnych masek na warstwach wypełnienia
+	Expand New Effects	Rozwijaj nowe efekty
+	Add “copy” to Copied Layers and Groups	Dodawaj „kopia” do skopiowanych warstw i grup
+	Preview on canvas when reordering layers	Podgląd na obszarze roboczym podczas zmiany kolejności warstw
+	Show layer mask badges	Pokaż odznaki masek warstw
+
+# Smart Filter editors
+	Blending Options ({filter})	Opcje mieszania ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Ukryj efekty warstwy i inteligentne filtry  (kliknięcie z {key}: wszystkie warstwy)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Pokaż efekty warstwy i inteligentne filtry  (kliknięcie z {key}: wszystkie warstwy)
+	Wait for the current job to finish.	Poczekaj na zakończenie bieżącego zadania.
+	The document or Smart Filter changed. Reopen its dialog.	Dokument lub inteligentny filtr został zmieniony. Otwórz ponownie jego okno dialogowe.
+	Opacity must be between 0% and 100%.	Krycie musi wynosić od 0% do 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Rozpuszczanie jest przybliżone: miesza się bez ditheringu Photoshopa.
 	Loading fonts…	Wczytywanie czcionek…
 	Response curve	Krzywa odpowiedzi
 	Simulate Pressure	Symuluj nacisk
@@ -3707,6 +3739,10 @@ curves	Smooth	Wygładź
 	Click to place · Alt-click or drag off-canvas to remove	Kliknij, aby umieścić · Alt-kliknij lub przeciągnij poza obszar roboczy, aby usunąć
 	No document open	Brak otwartego dokumentu
 	{n} of {max} sample points	{n} z {max} punktów próbkowania
+
+# History panel menu (#2966)
+	New Snapshot…	Nowa migawka…
+	History Options…	Opcje historii…
 # Print dialog (#2697)
 	Emulsion Down	Emulsja w dół
 	Functions	Funkcje
@@ -3768,6 +3804,9 @@ curves	Smooth	Wygładź
 	Sent to {printer}	Wysłano do {printer}
 	set in Print Settings…	ustawiane w ustawieniach druku…
 	ICO is limited to 256 × 256 pixels	ICO jest ograniczony do 256 × 256 pikseli
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	Maluje ze stanu źródłowego panelu Historia
+	Sets the source for the history brush	Ustawia źródło dla pędzla historii
 # Embedded Profile Mismatch: profile names beside the choices, Remember this choice
 	Use the embedded profile ({profile})	Użyj osadzonego profilu ({profile})
 	Convert to the working space ({profile})	Konwertuj na przestrzeń roboczą ({profile})
@@ -3788,6 +3827,13 @@ curves	Smooth	Wygładź
 # View › Guides › right-click a guide
 	Edit Selected Guides	Edytuj zaznaczone prowadnice
 	Clear Selected Guides	Usuń zaznaczone prowadnice
+	Bicubic Automatic	Dwusześcienna automatyczna
+	Bicubic Smoother	Dwusześcienna wygładzona
+	Bicubic Sharper	Dwusześcienna wyostrzona
+	Pasting from other apps is unavailable	Wklejanie z innych aplikacji jest niedostępne
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	PhotoCraft nie ma w tej sesji dostępu do schowka systemowego. W Waylandzie piaskownica Flatpaka ukrywa protokół, przez który odczytywane są obrazy z innych aplikacji.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Aby wklejać z innych aplikacji, uruchom PhotoCraft pod XWaylandem: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Nie ma czego wkleić: PhotoCraft nie może tutaj odczytać schowka systemowego
 	Delete this set	Usuń ten zestaw
 	New Set…	Nowy zestaw…
 	PhotoCraft Defaults	Domyślne PhotoCraft
@@ -3802,6 +3848,18 @@ curves	Smooth	Wygładź
 	There are too many sets: delete one first.	Zestawów jest za dużo: najpierw usuń jeden.
 	set name	nazwa zestawu
 	{set} (modified)	{set} (zmieniony)
+	Show file name in title	Pokaż nazwę pliku w tytule
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	Próg 50%
+	Pattern Dither	Rozpraszanie wzorkiem
+	Diffusion Dither	Rozpraszanie dyfuzyjne
+	Halftone Screen	Raster półtonowy
+	Custom Pattern	Własny wzór
+	Frequency:	Częstotliwość:
+	Lines/Inch	Linii/cal
+	Lines/Centimeter	Linii/centymetr
+	Ellipse	Elipsa
 	Accept and Go to Conflict	Akceptuj i przejdź do konfliktu
 	Changes undone.	Zmiany cofnięte.
 	Choose a new shortcut for this command, or leave it without one.	Wybierz nowy skrót dla tego polecenia lub zostaw je bez skrótu.
@@ -3829,3 +3887,24 @@ curves	Smooth	Wygładź
 	Increase Brush Size	Zwiększ rozmiar pędzla
 	Decrease Brush Hardness	Zmniejsz twardość pędzla
 	Increase Brush Hardness	Zwiększ twardość pędzla
+	Memory Usage	Użycie pamięci
+	Per-document RAM limit (MB)	Limit RAM na dokument (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Zainstalowany RAM: {ram} MB; ten limit: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Ogranicza piksele plus Historię każdego otwartego dokumentu. Najstarsze stany cofania są usuwane po przekroczeniu limitu.
+	Applies immediately when saved. Memory is not reserved in advance.	Obowiązuje zaraz po zapisaniu. Pamięć nie jest rezerwowana z góry.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Przy pamięci GPU = Automatycznie ogranicza też budżet GPU. Limit to 1/4 RAM i, jeśli znane, 3/8 pamięci karty, minimum 512 MB. Wyższy limit nie zwiększa budżetu GPU.
+	Use	Użyj
+	In Front	Z przodu
+	Behind	Z tyłu
+
+# DDS Options (#1327)
+	DDS Options	Opcje DDS
+	Compression	Kompresja
+	Generate Mipmaps	Generuj mipmapy
+
+# Color Table (.act) dialog
+	There is no color table to save.	Brak tabeli kolorów do zapisania.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Zapisano {n} kolor do {file}|Zapisano {n} kolory do {file}|Zapisano {n} kolorów do {file}
+
+# Graphics Adapter preference (#1885)
+	GPU adapter	Karta GPU

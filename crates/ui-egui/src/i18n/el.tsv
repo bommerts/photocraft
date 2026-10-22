@@ -1819,6 +1819,7 @@
 	Blending Options…	Επιλογές ανάμειξης…
 	Bevel & Emboss…	Λοξότμηση και ανάγλυφο…
 	Use Global Light	Χρήση καθολικού φωτισμού
+	Overprint	Υπερεκτύπωση
 	Inner Shadow…	Εσωτερική σκιά…
 	Inner Glow…	Εσωτερική λάμψη…
 	Satin…	Σατινέ…
@@ -1984,6 +1985,11 @@
 	Color Replacement Tool	Αντικατάσταση χρώματος (Color Replacement Tool)
 	Color Replacement	Αντικατάσταση χρώματος
 	Wet	Υγρασία
+	Current Brush Load	Τρέχουσα φόρτωση πινέλου
+	Load Brush	Φόρτωση πινέλου
+	Clean Brush	Καθαρισμός πινέλου
+	Load the brush after each stroke	Φόρτωση του πινέλου μετά από κάθε πινελιά
+	Clean the brush after each stroke	Καθαρισμός του πινέλου μετά από κάθε πινελιά
 	Load	Φόρτωση
 	Mix	Ανάμειξη
 	8 bit	8 bit ανά κανάλι
@@ -3747,6 +3753,32 @@ cameraData	Lens	Φακός
 	Mirror	Κατοπτρισμός
 	Output Settings	Ρυθμίσεις εξόδου
 	Output To	Έξοδος σε
+
+	Animation Options	Επιλογές κίνησης
+	Entire Document	Ολόκληρο έγγραφο
+	Filter Options	Επιλογές φίλτρου
+	Layer Bounds	Όρια επιπέδου
+	Layers Panel Options	Επιλογές πίνακα επιπέδων
+	New Artboard…	Νέος πίνακας σχεδίασης…
+	New Group…	Νέα ομάδα…
+	Prevent Auto-Nesting	Αποτροπή αυτόματης ένθεσης
+	Show Layers	Εμφάνιση επιπέδων
+	Thumbnail Contents	Περιεχόμενο μικρογραφιών
+	Thumbnail Size	Μέγεθος μικρογραφιών
+	Use Default Masks on Fill Layers	Χρήση προεπιλεγμένων μασκών σε επίπεδα γεμίσματος
+	Expand New Effects	Ανάπτυξη νέων εφέ
+	Add “copy” to Copied Layers and Groups	Προσθήκη «αντίγραφο» σε αντιγραμμένα επίπεδα και ομάδες
+	Preview on canvas when reordering layers	Προεπισκόπηση στον καμβά κατά την αναδιάταξη επιπέδων
+	Show layer mask badges	Εμφάνιση σημάτων μασκών επιπέδου
+
+# Smart Filter editors
+	Blending Options ({filter})	Επιλογές ανάμειξης ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Απόκρυψη εφέ επιπέδου και έξυπνων φίλτρων  ({key}-κλικ: όλα τα επίπεδα)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Εμφάνιση εφέ επιπέδου και έξυπνων φίλτρων  ({key}-κλικ: όλα τα επίπεδα)
+	Wait for the current job to finish.	Περιμένετε να ολοκληρωθεί η τρέχουσα εργασία.
+	The document or Smart Filter changed. Reopen its dialog.	Το έγγραφο ή το έξυπνο φίλτρο άλλαξε. Ανοίξτε ξανά το παράθυρό του.
+	Opacity must be between 0% and 100%.	Η αδιαφάνεια πρέπει να είναι μεταξύ 0% και 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Η Διάλυση προσεγγίζεται: η ανάμειξη γίνεται χωρίς το dither του Photoshop.
 	Loading fonts…	Φόρτωση γραμματοσειρών…
 	Response curve	Καμπύλη απόκρισης
 	Simulate Pressure	Προσομοίωση πίεσης
@@ -3792,6 +3824,10 @@ curves	Smooth	Εξομάλυνση
 # Color Sampler (added with the i18n coverage repair)
 	Click to place · Alt-click or drag off-canvas to remove	Κλικ για τοποθέτηση · Alt-κλικ ή σύρσιμο εκτός καμβά για αφαίρεση
 	{n} of {max} sample points	{n} από {max} σημεία δειγματοληψίας
+
+# History panel menu (#2966)
+	New Snapshot…	Νέο στιγμιότυπο…
+	History Options…	Επιλογές ιστορικού…
 # Print dialog (#2697)
 	Emulsion Down	Γαλάκτωμα προς τα κάτω
 	Functions	Λειτουργίες
@@ -3868,6 +3904,9 @@ curves	Smooth	Εξομάλυνση
 	Sent to {printer}	Στάλθηκε στον {printer}
 	set in Print Settings…	ορίζεται στις ρυθμίσεις εκτύπωσης…
 	ICO is limited to 256 × 256 pixels	Το ICO περιορίζεται σε 256 × 256 εικονοστοιχεία
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	Βάφει από την κατάσταση πηγής του πίνακα Ιστορικό
+	Sets the source for the history brush	Ορίζει την πηγή για το πινέλο ιστορικού
 # Embedded Profile Mismatch: profile names beside the choices, Remember this choice
 	Use the embedded profile ({profile})	Χρήση ενσωματωμένου προφίλ ({profile})
 	Convert to the working space ({profile})	Μετατροπή στον χώρο εργασίας ({profile})
@@ -3890,6 +3929,13 @@ curves	Smooth	Εξομάλυνση
 # View › Guides › right-click a guide
 	Edit Selected Guides	Επεξεργασία επιλεγμένων οδηγών
 	Clear Selected Guides	Απαλοιφή επιλεγμένων οδηγών
+	Bicubic Automatic	Δικυβική αυτόματη
+	Bicubic Smoother	Δικυβική πιο ομαλή
+	Bicubic Sharper	Δικυβική πιο ευκρινής
+	Pasting from other apps is unavailable	Η επικόλληση από άλλες εφαρμογές δεν είναι διαθέσιμη
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	Το PhotoCraft δεν έχει πρόσβαση στο πρόχειρο του συστήματος σε αυτή τη συνεδρία. Στο Wayland, το sandbox του Flatpak κρύβει το πρωτόκολλο μέσω του οποίου διαβάζονται εικόνες από άλλες εφαρμογές.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Για επικόλληση από άλλες εφαρμογές, ξεκινήστε το PhotoCraft σε XWayland: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Τίποτα για επικόλληση: το PhotoCraft δεν μπορεί να διαβάσει εδώ το πρόχειρο του συστήματος
 	Delete this set	Διαγραφή αυτού του συνόλου
 	New Set…	Νέο σύνολο…
 	PhotoCraft Defaults	Προεπιλογές PhotoCraft
@@ -3904,6 +3950,18 @@ curves	Smooth	Εξομάλυνση
 	There are too many sets: delete one first.	Υπάρχουν πάρα πολλά σύνολα: διαγράψτε πρώτα ένα.
 	set name	όνομα συνόλου
 	{set} (modified)	{set} (τροποποιημένο)
+	Show file name in title	Εμφάνιση ονόματος αρχείου στον τίτλο
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	Κατώφλι 50%
+	Pattern Dither	Πρόσμιξη μοτίβου
+	Diffusion Dither	Πρόσμιξη διάχυσης
+	Halftone Screen	Ράστερ ημιτόνων
+	Custom Pattern	Προσαρμοσμένο μοτίβο
+	Frequency:	Συχνότητα:
+	Lines/Inch	Γραμμές/ίντσα
+	Lines/Centimeter	Γραμμές/εκατοστό
+	Ellipse	Έλλειψη
 	Accept and Go to Conflict	Αποδοχή και μετάβαση στη σύγκρουση
 	Changes undone.	Οι αλλαγές αναιρέθηκαν.
 	Choose a new shortcut for this command, or leave it without one.	Επιλέξτε νέα συντόμευση για αυτήν την εντολή ή αφήστε την χωρίς.
@@ -3930,3 +3988,23 @@ curves	Smooth	Εξομάλυνση
 	Increase Brush Size	Αύξηση μεγέθους πινέλου
 	Decrease Brush Hardness	Μείωση σκληρότητας πινέλου
 	Increase Brush Hardness	Αύξηση σκληρότητας πινέλου
+	Memory Usage	Χρήση μνήμης
+	Per-document RAM limit (MB)	Όριο RAM ανά έγγραφο (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Εγκατεστημένη RAM: {ram} MB· αυτό το όριο: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Περιορίζει τα pixel συν το Ιστορικό κάθε ανοιχτού εγγράφου. Οι παλαιότερες καταστάσεις αναίρεσης απορρίπτονται όταν ξεπεραστεί το όριο.
+	Applies immediately when saved. Memory is not reserved in advance.	Ισχύει αμέσως με την αποθήκευση. Η μνήμη δεν δεσμεύεται εκ των προτέρων.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Με Μνήμη GPU σε Αυτόματο, περιορίζει και τον προϋπολογισμό GPU. Ανώτατο όριο το 1/4 της RAM και, αν είναι γνωστό, τα 3/8 της μνήμης κάρτας, ελάχιστο 512 MB. Μεγαλύτερο όριο δεν αυξάνει τον προϋπολογισμό GPU.
+	Use	Χρήση
+	In Front	Μπροστά
+	Behind	Πίσω
+
+# DDS Options (#1327)
+	DDS Options	Επιλογές DDS
+	Generate Mipmaps	Δημιουργία mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Δεν υπάρχει πίνακας χρωμάτων για αποθήκευση.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Αποθηκεύτηκε {n} χρώμα στο {file}|Αποθηκεύτηκαν {n} χρώματα στο {file}
+
+# Graphics Adapter preference (#1885)
+	GPU adapter	Προσαρμογέας GPU

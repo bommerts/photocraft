@@ -74,6 +74,13 @@ impl AuthorizedWorkspace {
     /// as [`photocraft_format::atomic_write`], through the directory capability). On failure
     /// the previous file is untouched and the temporary file is removed.
     ///
+    /// Replacing a file carries its extended attributes — macOS Finder tags, Linux `user.*` —
+    /// onto the file that takes its place (#7095), through the two open descriptors rather than
+    /// their paths, so nothing here reaches outside the write root to finish a write. The rest
+    /// of what [`photocraft_format::atomic_write`] preserves does not follow: its permission
+    /// step is tracked in #4963, and the Windows `ReplaceFileW` swap is path-based, which this
+    /// path may not use.
+    ///
     /// The parent directory must already exist. `cap-std` performs path
     /// resolution and file creation relative to the held directory handle, so
     /// a non-existent final target is supported without ambient path access.
@@ -85,10 +92,20 @@ impl AuthorizedWorkspace {
         let tmp = parent.join(photocraft_format::atomic::temp_name(&leaf));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        let written = root.dir.open_with(&tmp, &options).and_then(|mut file| {
+        let written = root.dir.open_with(&tmp, &options).and_then(|file| {
+            let mut file = file.into_std();
             file.write_all(bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::fd::AsFd;
+                // Best effort, and only when there is a file being replaced: a save still
+                // succeeds for a document whose Finder tag could not come along.
+                if let Ok(old) = root.dir.open(&relative) {
+                    let _ = photocraft_format::atomic::meta::copy_xattrs(old.as_fd(), file.as_fd());
+                }
+            }
             // Falls back to a plain fsync on shares that refuse a full flush (#1336).
-            photocraft_format::atomic::sync_file(&file.into_std())
+            photocraft_format::atomic::sync_file(&file)
         });
         let renamed = written.and_then(|()| photocraft_format::atomic::retry_rename(RenameRetry::platform(), || root.dir.rename(&tmp, &root.dir, &relative)));
         if let Err(e) = renamed {
@@ -323,6 +340,8 @@ fn params_contain_ambient_path(id: &str, params: &Value) -> bool {
         }
         "image.mode.rgb" | "image.mode.grayscale" | "image.mode.cmyk" | "image.mode.lab" => &["profile"],
         "edit.assignProfile" | "edit.convertToProfile" | "edit.profileInfo" | "view.proofSetup" | "view.gamutWarning" => &["profile"],
+        // New Document's Color Profile (#321) can name an .icc file.
+        "file.new" => &["profile"],
         "edit.colorSettings" => &["workingRgb", "workingCmyk", "workingGray"],
         _ => &[],
     };
@@ -338,6 +357,13 @@ fn profile_command_may_read_ambient(id: &str, params: &Value) -> bool {
     // Installed profiles scan OS and user directories even without a request path.
     if matches!(id, "color.profileMismatch" | "edit.colorSettings" | "edit.installedProfiles" | "view.proofSetup") {
         return true;
+    }
+    // New Document skips exact `working` and `none`; the other working aliases resolve
+    // the configured working space, which may be an .icc path.
+    if id == "file.new" {
+        return params.get("profile").and_then(Value::as_str).is_some_and(|profile| {
+            matches!(profile, "default" | "working-cmyk" | "workingCmyk" | "working-rgb" | "workingRgb" | "working-gray" | "workingGray")
+        });
     }
     matches!(id, "edit.assignProfile" | "edit.convertToProfile" | "edit.profileInfo")
         && params.get("profile").and_then(Value::as_str).is_some_and(|profile| {
@@ -572,6 +598,32 @@ mod tests {
         assert!(temp_files(&inside).is_empty());
     }
 
+    /// #7095: replacing a file through the automation path keeps the old file's extended
+    /// attributes, the same as a save through `atomic_write` does.
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn write_keeps_the_replaced_files_extended_attributes() {
+        #[cfg(target_os = "macos")]
+        const TAG: &str = "com.apple.metadata:_kMDItemUserTags";
+        #[cfg(not(target_os = "macos"))]
+        const TAG: &str = "user.photocraft.test";
+
+        let (inside, _, workspace) = roots("xattr");
+        let path = inside.join("doc.psd");
+        workspace.write("doc.psd", b"original").unwrap();
+        if rustix::fs::setxattr(&path, TAG, b"tagged", rustix::fs::XattrFlags::empty()).is_err() {
+            return; // a file system without extended attributes: nothing to assert
+        }
+
+        workspace.write("doc.psd", b"replacement, longer").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement, longer");
+        let mut buf = [0u8; 64];
+        let len = rustix::fs::getxattr(&path, TAG, buf.as_mut_slice()).expect("the attribute was dropped");
+        assert_eq!(&buf[..len], b"tagged");
+        assert!(temp_files(&inside).is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_into_read_only_folder_keeps_the_original() {
@@ -716,6 +768,12 @@ mod tests {
         assert!(authorize_desktop_engine_command("image.mode.cmyk", &serde_json::json!({})).is_err());
         assert!(authorize_engine_command("image.mode.rgb", &serde_json::json!({"profile": "/outside/profile.icc"})).is_err());
         assert!(authorize_engine_command("image.mode.rgb", &serde_json::json!({"profile": "srgb"})).is_ok());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "/outside/profile.icc"})).is_err());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "adobe-rgb-compat"})).is_ok());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "working"})).is_ok());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "none"})).is_ok());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "default"})).is_err());
+        assert!(authorize_engine_command("file.new", &serde_json::json!({"profile": "working-cmyk"})).is_err());
         // Shortcut sets: text in and out is fine; a path reads or writes the filesystem.
         let ks = |p: serde_json::Value| authorize_engine_command("edit.keyboardShortcuts", &p);
         assert!(ks(serde_json::json!({"exportKys": true, "summarize": true, "importKys": "<photoshop-keyboard-shortcuts/>"})).is_ok());
@@ -844,7 +902,9 @@ mod tests {
     }
 
     fn documents_filesystem_path_params(id: &str, params: &str) -> bool {
-        if matches!(id, "prefs.get" | "prefs.reset") {
+        // These commands return settings or installed-profile paths; they do not accept a host
+        // filesystem path as an automation input.
+        if matches!(id, "prefs.get" | "prefs.reset" | "edit.installedProfiles") {
             return false;
         }
         // These registry descriptions refer to document vector paths, not host files.

@@ -363,6 +363,32 @@ fn a_still_gif_is_one_frame_at_the_default_rate() {
     assert_eq!(s.active().unwrap().doc.layer(id).unwrap().video.as_ref().unwrap().fps, 10.0);
 }
 
+/// Interpret Footage and New Video Layer from File reject an fps that isn't a finite number in
+/// `(0, MAX_FPS]` and keep the layer as it was (#5657). 1e39 used to become an infinite rate the
+/// next `.pcraft` save refused.
+#[test]
+fn an_invalid_frame_rate_is_an_error_and_changes_nothing() {
+    let mut s = session();
+    let id = LayerId(s.execute("layer.videoLayers.newBlankVideoLayer", json!({})).unwrap()["layer"].as_u64().unwrap());
+    let fps = |s: &Session| s.active().unwrap().doc.layer(id).unwrap().video.as_ref().unwrap().fps;
+    assert_eq!(fps(&s), 30.0);
+    for bad in [json!(0), json!(-1), json!(1e39), json!("x")] {
+        assert!(s.execute("layer.videoLayers.interpretFootage", json!({"fps": bad})).is_err(), "fps {bad}");
+        assert_eq!(fps(&s), 30.0, "fps {bad}");
+    }
+    s.execute("layer.videoLayers.interpretFootage", json!({"fps": 24})).unwrap();
+    assert_eq!(fps(&s), 24.0);
+
+    let dir = tmpdir("gifin-badfps");
+    let path = format!("{dir}/anim.gif");
+    write_gif(&path, 8, 8, &[([255, 0, 0], 10), ([0, 255, 0], 10)]);
+    let layers = s.active().unwrap().doc.layer_count();
+    for bad in [json!(0), json!(-1), json!(1e39), json!("x")] {
+        assert!(s.execute("layer.videoLayers.newVideoLayerFromFile", json!({"path": path, "fps": bad})).is_err(), "fps {bad}");
+        assert_eq!(s.active().unwrap().doc.layer_count(), layers, "fps {bad}");
+    }
+}
+
 #[test]
 fn video_frames_to_layers_takes_every_gif_frame() {
     let dir = tmpdir("gifin-ftl");
@@ -552,4 +578,20 @@ fn render_video_rejects_gif_frames_too_large_to_stage() {
     s.execute("file.new", json!({"width": 9000, "height": 8000})).unwrap();
     let err = s.execute("file.export.renderVideo", json!({"dir": tmpdir("large-gif"), "format": "gif"})).unwrap_err();
     assert!(err.to_string().contains("too large"), "{err}");
+}
+
+#[test]
+fn fps_from_delays_picks_most_common_and_breaks_ties_by_first_seen() {
+    // Most common delay wins: 100 ms appears twice, 40 ms once -> 10 fps.
+    assert_eq!(fps_from_delays(&[100, 40, 100]), Some(10.0));
+    // Tie between 40 ms (25 fps) and 50 ms (20 fps): the first seen (40) wins.
+    assert_eq!(fps_from_delays(&[40, 50]), Some(25.0));
+    // Delays under 20 ms are treated as 100 ms.
+    assert_eq!(fps_from_delays(&[0, 10, 5]), Some(10.0));
+    assert_eq!(fps_from_delays(&[]), None);
+    // Many distinct delays used to be quadratic; this must stay fast and correct. Delay 20
+    // (the one appearing twice) wins at 50 fps.
+    let mut many: Vec<u32> = (20..5_020).collect();
+    many.push(20);
+    assert_eq!(fps_from_delays(&many), Some(50.0));
 }

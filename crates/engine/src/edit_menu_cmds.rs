@@ -68,7 +68,7 @@ pub(crate) fn after_command(s: &mut Session, id: &str) {
             let now = st.doc.layer(layer);
             let was = prev.layer(layer);
             let surf_eq = |a: Option<&Surface>, b: Option<&Surface>| match (a, b) {
-                (Some(a), Some(b)) => crate_fingerprint(a) == crate_fingerprint(b),
+                (Some(a), Some(b)) => a.format() == b.format() && a.default_pixel() == b.default_pixel() && crate_fingerprint(a) == crate_fingerprint(b),
                 (None, None) => true,
                 _ => false,
             };
@@ -208,13 +208,15 @@ fn fade(s: &mut Session, p: &Value) -> Result<Value> {
     let opacity = f32_or(p, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
     let mode = blend_from_str(str_or(p, "mode", "normal")).ok_or_else(|| bad(cmd, "unknown blend mode"))?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
-    let prev = st.history.state(st.history.past_len() - 1).ok_or_else(|| bad(cmd, "no previous state"))?;
+    let prev = st.history.past_len().checked_sub(1).and_then(|i| st.history.state(i)).ok_or_else(|| bad(cmd, "no previous state"))?;
     let before = surface_of(&prev, src.layer, src.mask).cloned().ok_or_else(|| EngineError::Other("the layer did not exist before this step".into()))?;
     let now = surface_of(&st.doc, src.layer, src.mask).ok_or(EngineError::NoLayer(src.layer))?;
     if now.format() != before.format() {
         return Err(EngineError::Other("can't fade a step that changed the layer's pixel format".into()));
     }
-    let area = before.content_bounds().union(&now.content_bounds());
+    // A uniform mask can change every pixel without storing a single tile. In that case
+    // the content bounds are empty, but Fade must still blend across the canvas.
+    let area = if before.default_pixel() != now.default_pixel() { st.doc.bounds() } else { before.content_bounds().union(&now.content_bounds()) };
     let label = format!("Fade {}", src.label);
     s.edit(&label, |doc, _| {
         let l = doc.layer_mut(src.layer).ok_or(EngineError::NoLayer(src.layer))?;
@@ -329,7 +331,7 @@ fn can_caf(s: &Session) -> std::result::Result<(), String> {
 }
 
 /// Mask surface (gray) of an alpha channel by index or name.
-fn channel_mask<'a>(doc: &'a Document, v: &Value) -> Option<&'a Surface> {
+pub(crate) fn channel_mask<'a>(doc: &'a Document, v: &Value) -> Option<&'a Surface> {
     match v {
         Value::Number(n) => doc.channels.get(n.as_u64()? as usize).map(|c| &c.surface),
         Value::String(name) => doc.channels.iter().find(|c| c.name == *name).map(|c| &c.surface),
@@ -719,6 +721,13 @@ fn content_aware_fill_as(s: &mut Session, p: &Value, cmd: &'static str, label: &
             let cancel = || ctx.cancelled();
             let plan = content_aware_plan_with(&doc, id, &p, cmd, &photocraft_raster::Interrupt::cancel_only(&cancel))?;
             let CafPlan { layer, rect, fmt, img, layer_px, cover, hole, source, opts, output, .. } = plan;
+            // Patches come only from the sampling area outside the fill area. With none (a
+            // Rectangular `margin` of 0, a Custom area inside the selection or off the canvas)
+            // the fill would be black (#6532), so refuse instead. The workspace's preview builds
+            // the same plan and may show an empty area while the Sampling Brush adds to it.
+            if !source.iter().any(|s| *s) {
+                return Err(bad(cmd, "nothing to sample from: the sampling area has no pixels outside the fill area"));
+            }
             let (w, h) = (rect.width() as usize, rect.height() as usize);
             let n = fmt.channels();
             // The fill changes only the fill area: keep the layer's pixels and the coverage over
@@ -1345,6 +1354,7 @@ pub struct PresetFile {
     pub version: u32,
     pub brushes: Vec<photocraft_paint::BrushPreset>,
     pub custom_shapes: Vec<CustomShape>,
+    pub tool_presets: Vec<crate::presets::tools::ToolPreset>,
 }
 
 pub const PRESET_FORMAT: &str = "photocraft-presets";
@@ -1355,7 +1365,7 @@ fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
         .get("kinds")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-        .unwrap_or_else(|| ["brushes", "customShapes"].iter().map(|k| k.to_string()).collect());
+        .unwrap_or_else(|| ["brushes", "customShapes", "tools"].iter().map(|k| k.to_string()).collect());
     let want = |k: &str| kinds.iter().any(|x| x == k);
     match str_or(p, "action", "export") {
         "export" => {
@@ -1374,8 +1384,14 @@ fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
                     Vec::new()
                 },
                 custom_shapes: if want("customShapes") { s.edit_state.custom_shapes.clone() } else { Vec::new() },
+                tool_presets: if want("tools") {
+                    let builtins = crate::presets::tools::builtin();
+                    s.presets.tool_presets.iter().filter(|preset| bool_or(p, "includeBuiltins", false) || !builtins.contains(preset)).cloned().collect()
+                } else {
+                    Vec::new()
+                },
             };
-            Ok(json!({"data": file, "brushes": file.brushes.len(), "customShapes": file.custom_shapes.len()}))
+            Ok(json!({"data": file, "brushes": file.brushes.len(), "customShapes": file.custom_shapes.len(), "tools": file.tool_presets.len()}))
         }
         "import" => {
             let data = p.get("data").cloned().ok_or_else(|| bad(cmd, "missing `data` (an exported preset file)"))?;
@@ -1386,6 +1402,29 @@ fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
             let file: PresetFile = serde_json::from_value(data).map_err(|e| bad(cmd, format!("not a preset file: {e}")))?;
             if file.format != PRESET_FORMAT {
                 return Err(bad(cmd, format!("not a preset file (format `{}`)", file.format)));
+            }
+            // Validate the whole tool import before changing any preset library.
+            let mut tools = s.presets.tool_presets.clone();
+            let nt = if want("tools") { file.tool_presets.len() } else { 0 };
+            if nt > crate::presets::tools::MAX_PRESETS {
+                return Err(bad(cmd, "too many tool presets"));
+            }
+            if want("tools") {
+                for mut preset in file.tool_presets {
+                    preset.name = crate::presets::tools::checked_name(&preset.name, cmd)?;
+                    if preset.tool.trim().is_empty() || !preset.options.is_object() {
+                        return Err(bad(cmd, "tool presets require a non-empty tool and an options object"));
+                    }
+                    if let Some(old) = tools.iter_mut().find(|old| old.name == preset.name && old.tool.eq_ignore_ascii_case(&preset.tool)) {
+                        *old = preset;
+                    } else if tools.iter().any(|old| old.name == preset.name) {
+                        return Err(bad(cmd, "a preset of that name belongs to another tool; rename it before importing"));
+                    } else if tools.len() < crate::presets::tools::MAX_PRESETS {
+                        tools.push(preset);
+                    } else {
+                        return Err(bad(cmd, "too many tool presets"));
+                    }
+                }
             }
             let (mut nb, mut ns) = (0, 0);
             if want("brushes") {
@@ -1411,7 +1450,11 @@ fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
                     ns += 1;
                 }
             }
-            Ok(json!({"brushes": nb, "customShapes": ns}))
+            if want("tools") {
+                s.presets.tool_presets = tools;
+                s.presets_changed();
+            }
+            Ok(json!({"brushes": nb, "customShapes": ns, "tools": nt}))
         }
         other => Err(bad(cmd, format!("unknown action `{other}` (export|import)"))),
     }
@@ -1503,7 +1546,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export/Import Presets…",
             ["Edit", "Presets"],
             None,
-            r##"{"action":"export|import","kinds":["brushes","customShapes"]?,"data":json (import),"includeBuiltins":bool=false}"##,
+            r##"{"action":"export|import","kinds":["brushes","customShapes","tools"]?,"data":json (import),"includeBuiltins":bool=false}"##,
             always,
             export_import
         ),

@@ -1296,6 +1296,11 @@
 	Mixer Brush	Cọ trộn
 	Mixer Brush Tool	Công cụ Cọ trộn
 	Wet	Ướt
+	Current Brush Load	Lượng sơn hiện tại của cọ
+	Load Brush	Nạp sơn cho cọ
+	Clean Brush	Làm sạch cọ
+	Load the brush after each stroke	Nạp sơn cho cọ sau mỗi nét vẽ
+	Clean the brush after each stroke	Làm sạch cọ sau mỗi nét vẽ
 	Load	Tải
 	Mix	Trộn
 	Flow	Lưu lượng
@@ -1904,6 +1909,7 @@ document	Orientation	Hướng trang
 	Preview	Xem trước
 	Blend Mode	Chế độ hòa trộn
 	Use Global Light	Dùng ánh sáng chung
+	Overprint	In chồng
 	Distance	Khoảng cách
 	Spread	Lan rộng
 	Choke	Thu hẹp
@@ -3640,6 +3646,11 @@ curves	Smooth	Làm mượt
 	Action playback stopped	Đã dừng phát hành động
 	Step {step} is waiting for its dialog	Bước {step} đang chờ hộp thoại của nó
 @plural	{n} action|{n} actions	{n} hành động
+# History panel menu (#2966)
+	Step Forward	Tiến một bước
+	New Snapshot…	Ảnh chụp trạng thái mới…
+	Clear History	Xóa lịch sử
+	History Options…	Tùy chọn lịch sử…
 	Background (Default)	Nền (mặc định)
 	Presentation	Trình bày
 # Batch / Image Processor
@@ -3656,6 +3667,9 @@ curves	Smooth	Làm mượt
 	Sent to {printer}	Đã gửi tới {printer}
 	set in Print Settings…	đặt trong thiết lập in…
 	ICO is limited to 256 × 256 pixels	ICO giới hạn ở 256 × 256 pixel
+# History panel › History Brush source (#2966)
+	Paints from the History panel's source state	Vẽ từ trạng thái nguồn của bảng Lịch sử
+	Sets the source for the history brush	Đặt nguồn cho cọ lịch sử
 # Embedded Profile Mismatch: profile names beside the choices, Remember this choice
 	Use the embedded profile ({profile})	Dùng hồ sơ nhúng ({profile})
 	Convert to the working space ({profile})	Chuyển sang không gian làm việc ({profile})
@@ -3676,6 +3690,13 @@ curves	Smooth	Làm mượt
 # View › Guides › right-click a guide
 	Edit Selected Guides	Sửa đường căn đã chọn
 	Clear Selected Guides	Xóa đường căn đã chọn
+	Bicubic Automatic	Bicubic tự động
+	Bicubic Smoother	Bicubic mượt hơn
+	Bicubic Sharper	Bicubic sắc hơn
+	Pasting from other apps is unavailable	Không thể dán từ ứng dụng khác
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	PhotoCraft không truy cập được bộ nhớ tạm của hệ thống trong phiên này. Trên Wayland, sandbox của Flatpak ẩn giao thức dùng để đọc hình ảnh từ ứng dụng khác.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Để dán từ ứng dụng khác, hãy khởi động PhotoCraft dưới XWayland: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Không có gì để dán: PhotoCraft không thể đọc bộ nhớ tạm của hệ thống ở đây
 	Delete this set	Xóa bộ này
 	New Set…	Bộ mới…
 	PhotoCraft Defaults	Mặc định của PhotoCraft
@@ -3690,6 +3711,45 @@ curves	Smooth	Làm mượt
 	There are too many sets: delete one first.	Có quá nhiều bộ: hãy xóa một bộ trước.
 	set name	tên bộ
 	{set} (modified)	{set} (đã sửa đổi)
+	Show file name in title	Hiển thị tên tệp trong tiêu đề
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	Ngưỡng 50%
+	Pattern Dither	Hòa sắc họa tiết
+	Diffusion Dither	Hòa sắc khuếch tán
+	Halftone Screen	Màn bán sắc
+	Custom Pattern	Họa tiết tùy chỉnh
+	Frequency:	Tần số:
+	Lines/Inch	Đường/inch
+	Lines/Centimeter	Đường/centimet
+	Ellipse	Elip
+
+# Layers panel options and Smart Filter editors
+	Add “copy” to Copied Layers and Groups	Thêm “bản sao” vào lớp và nhóm được sao chép
+	Animation Options	Tùy chọn hoạt ảnh
+	Entire Document	Toàn bộ tài liệu
+	Expand New Effects	Mở rộng hiệu ứng mới
+	Filter Options	Tùy chọn bộ lọc
+	Layer Bounds	Đường biên lớp
+	Layers Panel Options	Tùy chọn bảng Lớp
+	New Artboard…	Bảng vẽ mới…
+	New Group…	Nhóm mới…
+	Panel Options…	Tùy chọn bảng…
+	Prevent Auto-Nesting	Chặn tự lồng
+	Preview on canvas when reordering layers	Xem trước trên Canvas khi sắp xếp lại lớp
+	Show Layers	Hiện các lớp
+	Show layer mask badges	Hiện huy hiệu mặt nạ lớp
+	Thumbnail Contents	Nội dung hình thu nhỏ
+	Thumbnail Size	Kích thước hình thu nhỏ
+	Use Default Masks on Fill Layers	Dùng mặt nạ mặc định cho lớp tô
+
+	Blending Options ({filter})	Tùy chọn hòa trộn ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Ẩn hiệu ứng và bộ lọc thông minh của lớp  ({key}-bấm: tất cả các lớp)
+	Opacity must be between 0% and 100%.	Độ mờ phải nằm trong khoảng từ 0% đến 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Hoà tan chỉ được mô phỏng gần đúng: hòa trộn không có dither của Photoshop.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Hiện hiệu ứng và bộ lọc thông minh của lớp  ({key}-bấm: tất cả các lớp)
+	The document or Smart Filter changed. Reopen its dialog.	Tài liệu hoặc bộ lọc thông minh đã thay đổi. Hãy mở lại hộp thoại của nó.
+	Wait for the current job to finish.	Hãy chờ tác vụ hiện tại hoàn tất.
 	Accept and Go to Conflict	Chấp nhận và đến xung đột
 	Changes undone.	Đã hoàn tác thay đổi.
 	Choose a new shortcut for this command, or leave it without one.	Chọn phím tắt mới cho lệnh này, hoặc để lệnh không có phím tắt.
@@ -3717,3 +3777,24 @@ curves	Smooth	Làm mượt
 	Increase Brush Size	Tăng kích thước cọ
 	Decrease Brush Hardness	Giảm độ cứng của cọ
 	Increase Brush Hardness	Tăng độ cứng của cọ
+	Memory Usage	Sử dụng bộ nhớ
+	Per-document RAM limit (MB)	Giới hạn RAM mỗi tài liệu (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	RAM đã cài: {ram} MB; giới hạn này: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Giới hạn pixel cộng Lịch sử của mỗi tài liệu đang mở. Các trạng thái hoàn tác cũ nhất bị bỏ khi vượt giới hạn.
+	Applies immediately when saved. Memory is not reserved in advance.	Áp dụng ngay khi lưu. Bộ nhớ không được dành trước.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Khi Bộ nhớ GPU là Tự động, cũng giới hạn ngân sách GPU. Trần là 1/4 RAM và, nếu biết, 3/8 bộ nhớ card, tối thiểu 512 MB. Tăng giới hạn không làm tăng ngân sách GPU.
+	Use	Dùng
+	In Front	Phía trước
+	Behind	Phía sau
+
+# DDS Options (#1327)
+	DDS Options	Tùy chọn DDS
+	Compression	Nén
+	Generate Mipmaps	Tạo mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Không có bảng màu nào để lưu.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Đã lưu {n} màu vào {file}
+
+# Graphics Adapter preference (#1885)
+	GPU adapter	Bộ điều hợp GPU

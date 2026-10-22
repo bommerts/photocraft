@@ -318,6 +318,23 @@ fn gradient_new_rename_move_delete_groups() {
 }
 
 #[test]
+fn gradient_rename_group_refuses_a_name_another_group_has() {
+    let mut s = Session::new();
+    s.execute("gradient.presets.edit", json!({"action": "newGroup", "name": "Pastels"})).unwrap();
+    let names = |s: &mut Session| -> Vec<Value> {
+        s.execute("gradient.presets.list", json!({})).unwrap()["groups"].as_array().unwrap().iter().map(|g| g["name"].clone()).collect()
+    };
+    let before = names(&mut s);
+    assert!(before.contains(&json!("Blues")));
+    let err = s.execute("gradient.presets.edit", json!({"action": "renameGroup", "group": "Pastels", "name": "Blues"})).unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
+    assert_eq!(names(&mut s), before, "a refused rename leaves the groups unchanged");
+    // Renaming a group to its own name is fine.
+    s.execute("gradient.presets.edit", json!({"action": "renameGroup", "group": "Pastels", "name": "Pastels"})).unwrap();
+    assert_eq!(names(&mut s), before);
+}
+
+#[test]
 fn presets_persist_through_preferences_json() {
     let mut s = Session::new();
     s.execute("gradient.presets.new", json!({"name": "Saved", "stops": [[0, "#ff0000"], [1, "#0000ff"]]})).unwrap();
@@ -758,14 +775,22 @@ fn a_damaged_preset_set_keeps_the_other_sets() {
     let mut s = Session::new();
     let settings = json!({"width": 1600, "height": 900, "resolution": 144});
     s.execute("document.presets.save", json!({"name": "Banner", "settings": settings})).unwrap();
+    let export = json!({
+        "format": "jpg", "quality": 70, "lossless": false, "transparency": false, "scale": 50, "width": 640, "height": 480,
+        "lockAspect": true, "sizing": "pixels", "metadata": "exif", "profile": "srgb", "embedProfile": false, "tgaBits": "24"
+    });
+    s.execute("file.export.presets.save", json!({"name": "Web JPEG", "settings": export})).unwrap();
     let saved = s.presets.to_json(&s);
-    for key in ["gradients", "gradient", "styles", "shapes", "pattern_groups", "custom_shapes", "layer_defaults", "swatches"] {
+    for key in ["gradients", "gradient", "styles", "shapes", "pattern_groups", "custom_shapes", "layer_defaults", "swatches", "export_presets"] {
         let mut blob = saved.clone();
         blob[key] = json!("not a preset set");
         let mut next = Session::new();
         next.load_presets_json(blob);
         assert_eq!(next.presets.documents, s.presets.documents, "damaged `{key}`");
         assert_eq!(next.presets.tool_presets.len(), Session::new().presets.tool_presets.len(), "damaged `{key}`");
+        if key != "export_presets" {
+            assert_eq!(next.presets.export_presets, s.presets.export_presets, "damaged `{key}`");
+        }
     }
     // Null sets keep their defaults, as before.
     let mut next = Session::new();

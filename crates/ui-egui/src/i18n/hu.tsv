@@ -1114,6 +1114,8 @@
 	Height:	Magasság:
 	Hide Auto Slices	Automatikus szeletek elrejtése
 	History Brush	Előzményecset
+	Paints from the History panel's source state	Az Előzmények panel forrásállapotából fest
+	Sets the source for the history brush	Beállítja az előzményecset forrását
 	Horizontal scale	Vízszintes méretarány
 	Horizontal type	Vízszintes szöveg
 	Hue Jitter	Színárnyalat ingadozása
@@ -1407,6 +1409,11 @@
 	Warp:	Hajlítás:
 	Weight	Vastagság
 	Wet	Nedvesség
+	Current Brush Load	Az ecset jelenlegi töltete
+	Load Brush	Ecset feltöltése
+	Clean Brush	Ecset tisztítása
+	Load the brush after each stroke	Az ecset feltöltése minden ecsetvonás után
+	Clean the brush after each stroke	Az ecset tisztítása minden ecsetvonás után
 	Wet Edges	Nedves szélek
 	Wetness Jitter	Nedvesség ingadozása
 	Width	Szélesség
@@ -1609,6 +1616,7 @@ fontWeight	Thin	Hajszálvékony
 	Overlay	Átfedés
 	Overlay Color	Átfedés színe
 	Overlay Opacity	Átfedés átlátszatlansága
+	Overprint	Felülnyomás
 	Paint over hair or fur on the image; Alt paints the other mode	Fesd át a hajat vagy a szőrzetet a képen; Alt lenyomásával a másik módban festesz
 	Pass Through	Áteresztés
 	Pattern Overlay	Mintázatfedés
@@ -3869,6 +3877,8 @@ cameraRaw	Yellow	Sárga
 	New Layer from Brush	Új réteg ecsetből
 	New Path	Új útvonal
 	New Snapshot	Új pillanatkép
+	New Snapshot…	Új pillanatkép…
+	History Options…	Előzménybeállítások…
 	New Video Group	Új videócsoport
 	Newspaper	Újságpapír
 	No Layer Comps	Nincs rétegkompozíció
@@ -4109,6 +4119,13 @@ cameraRaw	Yellow	Sárga
 # View › Guides › right-click a guide
 	Edit Selected Guides	Kijelölt segédvonalak szerkesztése
 	Clear Selected Guides	Kijelölt segédvonalak törlése
+	Bicubic Automatic	Automatikus bikubikus
+	Bicubic Smoother	Simább bikubikus
+	Bicubic Sharper	Élesebb bikubikus
+	Pasting from other apps is unavailable	A beillesztés más alkalmazásokból nem érhető el
+	PhotoCraft can't reach the system clipboard in this session. On Wayland, a Flatpak sandbox hides the protocol that images from other apps are read through.	A PhotoCraft ebben a munkamenetben nem fér hozzá a rendszer vágólapjához. Waylanden a Flatpak homokozó elrejti azt a protokollt, amelyen keresztül más alkalmazások képei olvashatók.
+	To paste from other apps, start PhotoCraft under XWayland: `{command}`	Ha más alkalmazásokból szeretne beilleszteni, indítsa a PhotoCraftot XWayland alatt: `{command}`
+	Nothing to paste: PhotoCraft can't read the system clipboard here	Nincs mit beilleszteni: a PhotoCraft itt nem tudja olvasni a rendszer vágólapját
 	Delete this set	Készlet törlése
 	New Set…	Új készlet…
 	PhotoCraft Defaults	PhotoCraft alapértelmezések
@@ -4123,6 +4140,44 @@ cameraRaw	Yellow	Sárga
 	There are too many sets: delete one first.	Túl sok készlet van: előbb töröljön egyet.
 	set name	készlet neve
 	{set} (modified)	{set} (módosítva)
+	Show file name in title	Fájlnév megjelenítése a címben
+
+# Image › Mode › Bitmap (#5559)
+	50% Threshold	50%-os küszöb
+	Pattern Dither	Mintázatos keverés
+	Diffusion Dither	Diffúziós keverés
+	Halftone Screen	Féltónusrács
+	Custom Pattern	Egyéni mintázat
+	Frequency:	Gyakoriság:
+	Lines/Inch	Vonal/hüvelyk
+	Lines/Centimeter	Vonal/centiméter
+	Ellipse	Ellipszis
+
+# Layers panel options and Smart Filter editors
+	Add “copy” to Copied Layers and Groups	„másolat” hozzáadása a másolt rétegekhez és csoportokhoz
+	Animation Options	Animációs beállítások
+	Entire Document	Teljes dokumentum
+	Expand New Effects	Új effektusok kibontása
+	Filter Options	Szűrési beállítások
+	Layer Bounds	Réteghatárok
+	Layers Panel Options	Rétegek panel beállításai
+	New Artboard…	Új rajztábla…
+	New Group…	Új csoport…
+	Prevent Auto-Nesting	Automatikus beágyazás tiltása
+	Preview on canvas when reordering layers	Előnézet a vásznon a rétegek átrendezésekor
+	Show Layers	Rétegek megjelenítése
+	Show layer mask badges	Rétegmaszk-jelvények megjelenítése
+	Thumbnail Contents	Bélyegkép tartalma
+	Thumbnail Size	Bélyegképméret
+	Use Default Masks on Fill Layers	Alapértelmezett maszkok kitöltőrétegeken
+
+	Blending Options ({filter})	Keverési beállítások ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	A réteg effektusainak és intelligens szűrőinek elrejtése  ({key}+kattintás: minden réteg)
+	Opacity must be between 0% and 100%.	Az átlátszatlanságnak 0% és 100% között kell lennie.
+	Dissolve is approximated: it blends without Photoshop's dither.	A Szétszórás csak közelítés: a Photoshop raszterezése nélkül keveredik.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	A réteg effektusainak és intelligens szűrőinek megjelenítése  ({key}+kattintás: minden réteg)
+	The document or Smart Filter changed. Reopen its dialog.	A dokumentum vagy az intelligens szűrő megváltozott. Nyisd meg újra a párbeszédablakát.
+	Wait for the current job to finish.	Várd meg, amíg az aktuális feladat befejeződik.
 	Accept and Go to Conflict	Elfogadás és ugrás az ütközéshez
 	Changes undone.	Változások visszavonva.
 	Choose a new shortcut for this command, or leave it without one.	Válasszon új billentyűparancsot ehhez a parancshoz, vagy hagyja nélküle.
@@ -4149,3 +4204,23 @@ cameraRaw	Yellow	Sárga
 	Increase Brush Size	Ecsetméret növelése
 	Decrease Brush Hardness	Ecsetkeménység csökkentése
 	Increase Brush Hardness	Ecsetkeménység növelése
+	Memory Usage	Memóriahasználat
+	Per-document RAM limit (MB)	Dokumentumonkénti RAM-korlát (MB)
+	Installed RAM: {ram} MB; this limit: {percent}%	Telepített RAM: {ram} MB; ez a korlát: {percent}%
+	Limits each open document's pixels plus History. Oldest undo states are discarded when the limit is exceeded.	Minden nyitott dokumentum pixeljeit és előzményeit korlátozza. A legrégebbi visszavonási állapotok törlődnek a korlát túllépésekor.
+	Applies immediately when saved. Memory is not reserved in advance.	Mentéskor azonnal érvényes. A memória nincs előre lefoglalva.
+	With GPU Memory set to Automatic, this also limits the GPU layer budget. That budget is capped at one quarter of installed RAM and, when known, three eighths of the graphics card's memory, with a 512 MB minimum. Raising this limit beyond those caps does not increase the GPU budget.	Automatikus GPU-memóriánál a GPU-rétegkeretet is korlátozza. Felső határ a RAM negyede és, ha ismert, a kártyamemória háromnyolcada, minimum 512 MB. Magasabb korlát a GPU-keretet nem növeli.
+	Use	Használat
+	In Front	Elöl
+	Behind	Mögött
+
+# DDS Options (#1327)
+	DDS Options	DDS-beállítások
+	Generate Mipmaps	Mipmapek létrehozása
+
+# Color Table (.act) dialog
+	There is no color table to save.	Nincs menthető színtábla.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} szín mentve ide: {file}
+
+# Graphics Adapter preference (#1885)
+	GPU adapter	GPU-adapter

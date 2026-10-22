@@ -155,6 +155,8 @@ fn pencil_dabs_sit_on_the_pixel_grid() {
     // Odd sizes centre on the pixel holding the point, even ones on the nearest corner.
     assert_eq!(grid_center(10.0, 5.0, 1.0), (10.5, 5.5));
     assert_eq!(grid_center(10.9, 5.2, 3.0), (10.5, 5.5));
+    assert_eq!(grid_center(10.0 - 5e-8, 5.0 - 5e-8, 1.0), (10.5, 5.5));
+    assert_eq!(grid_center(10.0 - 2e-7, 5.0 - 2e-7, 1.0), (9.5, 4.5));
     assert_eq!(grid_center(10.4, 5.6, 2.0), (10.0, 6.0));
     assert_eq!(grid_square(10.2, 5.7, 1.0), [10.0, 5.0, 11.0, 6.0]);
     assert_eq!(grid_square(10.2, 5.7, 4.0), [8.0, 4.0, 12.0, 8.0]);
@@ -905,6 +907,78 @@ fn smoothing_without_catch_up_stops_while_the_pointer_pauses() {
         s.push(StrokePoint { time: t, ..StrokePoint::new(100.0, 0.0, 1.0) }, &mut out);
     }
     assert_eq!(out.len(), n, "held still: the brush doesn't move");
+}
+
+#[test]
+fn a_smoothed_brush_keeps_the_pressure_of_where_it_is_when_the_pen_lifts() {
+    // #5713: a fast stroke at full pressure, lifted in the last sample. The brush trails far
+    // behind the pointer; it used to take the lift's pressure there, and the end catch-up drew
+    // a hairline from the trailing brush to the pointer.
+    let pts: Vec<StrokePoint> =
+        (0..=20).map(|i| StrokePoint { time: f64::from(i) * 4.0, ..StrokePoint::new(f64::from(i) * 10.0, 0.0, if i < 20 { 1.0 } else { 0.05 }) }).collect();
+    let out = smooth_points(&Smoothing { amount: 0.8, ..Default::default() }, 1.0, &pts);
+    let (last, rest) = out.split_last().unwrap();
+    assert_eq!((last.x, last.pressure), (200.0, 0.05), "the catch-up still ends at the pen's last sample");
+    let lifted = rest.last().unwrap();
+    assert!(lifted.x < 190.0, "the brush lags the pointer: {}", lifted.x);
+    for p in rest {
+        assert!(p.pressure > 0.5, "the trailing brush at x {} has pressure {}", p.x, p.pressure);
+    }
+}
+
+#[test]
+fn a_pulled_string_brush_takes_the_pose_along_the_string() {
+    let ps = Smoothing { amount: 0.2, pulled_string: true, catch_up_on_end: false, ..Default::default() };
+    let a = StrokePoint { rotation: 350.0, ..StrokePoint::new(0.0, 0.0, 1.0) };
+    let b = StrokePoint { rotation: 10.0, tilt_x: 40.0, ..StrokePoint::new(100.0, 0.0, 0.0) };
+    let out = smooth_points(&ps, 1.0, &[a, b]);
+    // The 20 px string leaves the brush 80 % of the way to the pointer.
+    let p = out.last().unwrap();
+    assert!((p.x - 80.0).abs() < 1e-4, "{}", p.x);
+    assert!((p.pressure - 0.2).abs() < 1e-4, "{}", p.pressure);
+    assert!((p.tilt_x - 32.0).abs() < 1e-3, "{}", p.tilt_x);
+    // Rotation the short way round: 350° + 80 % of 20°.
+    assert!((p.rotation - 6.0).abs() < 1e-3, "{}", p.rotation);
+}
+
+#[test]
+fn a_smoothed_brush_catches_up_with_a_pen_lifted_in_place() {
+    // #7747: only the pressure changes while the pointer stands still. The brush lags in pose,
+    // so catch-up must keep running and the stroke end at the pen's last pressure.
+    let cfg = Smoothing { amount: 0.8, ..Default::default() };
+    let mut s = Smoother::new(&cfg, 1.0);
+    let mut out = Vec::new();
+    s.push(StrokePoint::new(50.0, 50.0, 1.0), &mut out);
+    s.push(StrokePoint { time: 32.0, ..StrokePoint::new(50.0, 50.0, 0.0) }, &mut out);
+    assert!(out.last().unwrap().pressure > 0.5, "the brush trails in pressure: {:?}", out.last());
+    assert!(s.lagging(), "a pose behind the pointer is still catching up");
+    // Held long enough, the brush arrives and stops asking for time.
+    for i in 1..=200 {
+        s.push(StrokePoint { time: 32.0 + f64::from(i) * 16.0, ..StrokePoint::new(50.0, 50.0, 0.0) }, &mut out);
+    }
+    assert!(!s.lagging(), "{:?}", out.last());
+    s.finish(&mut out);
+    assert_eq!(out.last().unwrap().pressure, 0.0);
+}
+
+#[test]
+fn catch_up_on_stroke_end_finishes_the_pose_of_a_still_pen() {
+    // #7747: tilt, rotation and wheel changed in place; the end catch-up lands on all of them.
+    let cfg = Smoothing { amount: 0.8, ..Default::default() };
+    let a = StrokePoint { rotation: 350.0, ..StrokePoint::new(50.0, 50.0, 1.0) };
+    let b = StrokePoint { time: 16.0, tilt_x: 40.0, tilt_y: -20.0, rotation: 10.0, wheel: 0.5, ..StrokePoint::new(50.0, 50.0, 1.0) };
+    let mut s = Smoother::new(&cfg, 1.0);
+    let mut out = Vec::new();
+    s.push(a, &mut out);
+    s.push(b, &mut out);
+    assert!(s.lagging());
+    s.finish(&mut out);
+    let p = out.last().unwrap();
+    assert_eq!((p.tilt_x, p.tilt_y, p.rotation, p.wheel), (40.0, -20.0, 10.0, 0.5));
+    // Nothing left to catch up: no extra point.
+    let n = out.len();
+    s.finish(&mut out);
+    assert_eq!(out.len(), n);
 }
 
 #[test]

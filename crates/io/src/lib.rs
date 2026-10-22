@@ -20,6 +20,8 @@
 //!   opacity and visibility; see `ora`.
 //! * Krita (`.kra`, `.krz`) documents open with their paint layers, groups and transparency
 //!   masks (import only); see `kra`.
+//! * GIMP XCF (`.xcf`, `.xcf.gz`) documents open with their layers, groups, masks, blend modes,
+//!   channels and selection, read only; see `xcf`.
 //! * Affinity documents (`.af`, `.afdesign`, `.afphoto`, `.afpub`) open natively
 //!   with no source save path, what isn't imported listed in the warnings; a file
 //!   whose native data can't be read opens as its embedded preview; see `affinity`.
@@ -45,15 +47,20 @@ pub mod effects_map;
 pub mod exr_parts;
 mod flat;
 mod gradient_bake;
+pub mod guides_map;
 pub use gradient_bake::{Method as GradientMethod, bake as bake_gradient};
+mod duotone_map;
 mod kra;
 pub mod linked;
 mod multichannel_map;
 mod ora;
+mod palette_map;
 pub use ora::losses as ora_losses;
 pub mod pattern_map;
+mod pcraft_cache;
 pub mod pdf;
 mod pdn;
+pub use pcraft_cache::PcraftExportCache;
 pub mod pixels;
 mod psd_export;
 mod psd_import;
@@ -66,10 +73,11 @@ mod text_import;
 pub mod text_styles_map;
 pub mod tiff_layers;
 pub mod vector_map;
+mod xcf;
 
-pub use photocraft_codecs::DpxBits;
 use photocraft_codecs::{CodecError, EncodeOptions};
-use photocraft_doc::Document;
+pub use photocraft_codecs::{DdsCompression, DdsOptions, DpxBits};
+use photocraft_doc::{Adjustment, Document, Layer, LayerContent};
 use photocraft_psd::{PsdError, PsdFile};
 
 pub use adjust_map::ADJUSTMENT_KEYS;
@@ -92,6 +100,9 @@ pub enum IoError {
     /// OpenRaster read failure.
     #[error("OpenRaster: {0}")]
     Ora(String),
+    /// A GIMP XCF file that could not be read.
+    #[error("XCF: {0}")]
+    Xcf(String),
     /// PSD parse/write failure.
     #[error("PSD: {0}")]
     Psd(#[from] PsdError),
@@ -138,6 +149,34 @@ pub struct ImportResult {
 pub(crate) fn unequal_resolution_warning(x: f64, y: f64) -> Option<String> {
     ((x - y).abs() >= 0.01)
         .then(|| format!("the vertical resolution ({y:.2} ppi) differs from the horizontal ({x:.2} ppi); the document keeps {x:.2} ppi for both"))
+}
+
+/// Warnings about a loaded document's layers that render without their stored effect, for
+/// sources that carry no import warnings of their own (a crafted `.pcraft`): a Color Lookup
+/// whose table can't be applied silently renders as the identity instead (#1763).
+pub fn open_warnings(doc: &Document) -> Vec<String> {
+    let mut out = Vec::new();
+    // Iterative, so no document's nesting can make this recurse.
+    let mut stack: Vec<&Layer> = doc.layers.iter().rev().collect();
+    while let Some(l) = stack.pop() {
+        if let LayerContent::Adjustment(Adjustment::ColorLookup { name: _, size, lut, .. }) = &l.content {
+            match lut.as_deref().zip(photocraft_doc::adjust::lut3d_len(*size)) {
+                Some((table, len)) if table.len() >= len => {}
+                Some((table, len)) => out.push(format!(
+                    "layer \"{}\": its Color Lookup table has {} values, but a {size}³ lookup needs {len}; the layer renders without the lookup",
+                    l.name,
+                    table.len()
+                )),
+                None => {
+                    out.push(format!("layer \"{}\": its Color Lookup has no usable table for a {size}³ lookup; the layer renders without the lookup", l.name))
+                }
+            }
+        }
+        if let Some(children) = l.children() {
+            stack.extend(children.iter().rev());
+        }
+    }
+    out
 }
 
 /// Result of [`export`].
@@ -191,6 +230,8 @@ pub struct ExportOptions {
     /// The path of the document's own file, which linked smart objects that PSD/PSB and layered
     /// TIFF embed are resolved against ([`doc_path::resolve`]).
     pub document_path: Option<std::path::PathBuf>,
+    /// Reuse one cache per open document for native saves; other formats ignore it.
+    pub pcraft_cache: Option<PcraftExportCache>,
 }
 
 impl Default for ExportOptions {
@@ -204,6 +245,7 @@ impl Default for ExportOptions {
             image_previews: true,
             psd_maximize_compatibility: true,
             document_path: None,
+            pcraft_cache: None,
         }
     }
 }
@@ -236,9 +278,19 @@ impl TgaBits {
     }
 }
 
+/// Photoshop document extensions File › Open routes to the PSD reader.
+const PSD_EXTS: &[&str] = &["psd", "psb", "psdt"];
+
 /// `true` if `bytes` start with the PSD/PSB signature.
 pub fn is_psd(bytes: &[u8]) -> bool {
     bytes.starts_with(b"8BPS")
+}
+
+/// PSD/PSB/PSDT by magic, or by a declared Photoshop extension when no other raster
+/// signature is present. A PNG/JPEG/TIFF downloaded as `.psd` still opens from its bytes
+/// (#5258 review).
+fn is_psd_input(name: &str, bytes: &[u8]) -> bool {
+    is_psd(bytes) || (PSD_EXTS.iter().any(|e| has_extension(name, e)) && photocraft_codecs::detect(bytes).is_none())
 }
 
 /// Imports a file. PSD/PSB, Affinity containers and camera raws are detected by magic; everything
@@ -273,27 +325,34 @@ pub fn import_with_svg_group_depth_and_interrupt(
     Ok(r)
 }
 
+fn import_psd(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt) -> Result<ImportResult, IoError> {
+    // A merged image the import reads is decoded with the parse: a ZIP one is inflated once.
+    let (file, merged) = PsdFile::from_bytes_and_merged_recovering(
+        bytes,
+        |f| psd_import::check_group_depth(f).is_ok() && psd_import::merged_needed(f),
+        psd_import::can_recover_layers,
+    )?;
+    // Nesting past the document model's cap could never be saved; reject the file with the
+    // actionable limit.
+    psd_import::check_group_depth(&file)?;
+    ctl.check().map_err(|_| IoError::Cancelled)?;
+    ctl.progress(0.05);
+    let (mut document, warnings) = psd_import::psd_to_document_decoded(&file, ctl, merged).ok_or(IoError::Cancelled)?;
+    document.name = name.to_string();
+    text_import::prepare(&mut document);
+    Ok(ImportResult { document, warnings, source_read_only: false, preview_only: false })
+}
+
 fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, max_group_depth: usize) -> Result<ImportResult, IoError> {
     // A declared native extension must reach its loader so malformed bundles retain format errors.
     if has_extension(name, photocraft_format::EXTENSION) || photocraft_format::is_pcraft(bytes) {
-        return Ok(ImportResult { document: photocraft_format::load_from_bytes(bytes)?, warnings: Vec::new(), source_read_only: false, preview_only: false });
+        let document = photocraft_format::load_from_bytes(bytes)?;
+        return Ok(ImportResult { warnings: open_warnings(&document), document, source_read_only: false, preview_only: false });
     }
+    // Magic first: an Affinity file renamed .psd is still Affinity (#5258 corpus
+    // preview_never_saves_back_to_its_native_or_renamed_source).
     if is_psd(bytes) {
-        // A merged image the import reads is decoded with the parse: a ZIP one is inflated once.
-        let (file, merged) = PsdFile::from_bytes_and_merged_recovering(
-            bytes,
-            |f| psd_import::check_group_depth(f).is_ok() && psd_import::merged_needed(f),
-            psd_import::can_recover_layers,
-        )?;
-        // Nesting past the document model's cap could never be saved; reject the file with the
-        // actionable limit.
-        psd_import::check_group_depth(&file)?;
-        ctl.check().map_err(|_| IoError::Cancelled)?;
-        ctl.progress(0.05);
-        let (mut document, warnings) = psd_import::psd_to_document_decoded(&file, ctl, merged).ok_or(IoError::Cancelled)?;
-        document.name = name.to_string();
-        text_import::prepare(&mut document);
-        return Ok(ImportResult { document, warnings, source_read_only: false, preview_only: false });
+        return import_psd(name, bytes, ctl);
     }
     if affinity::is_affinity(bytes) || affinity::has_extension(name) {
         return affinity::import(name, bytes);
@@ -306,6 +365,14 @@ fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, m
     if kra::is_kra(bytes) || (kra::EXTENSIONS.iter().any(|e| has_extension(name, e)) && photocraft_codecs::detect(bytes).is_none()) {
         return kra::import(name, bytes, ctl);
     }
+    // GIMP files are gzip or raw; as above, a recognized raster signature still wins over a
+    // misleading .xcf suffix.
+    if xcf::is_xcf(bytes) || (has_extension(name, "xcf") && photocraft_codecs::detect(bytes).is_none()) {
+        return xcf::import(name, bytes, ctl);
+    }
+    if xcf::is_gzipped_xcf(name, bytes) {
+        return xcf::import(name, &xcf::gunzip(bytes)?, ctl);
+    }
     if has_extension(name, "pdn") || bytes.starts_with(b"PDN3") {
         return pdn::import(name, bytes, ctl);
     }
@@ -314,6 +381,11 @@ fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, m
     }
     if is_svg_input(name, bytes) {
         return svg::import_svg_with_group_depth(name, bytes, max_group_depth);
+    }
+    // A `.psd`/`.psb`/`.psdt` with no raster signature keeps the PSD error instead of
+    // `codec: unrecognized image format` (#5258). Magic already returned above.
+    if is_psd_input(name, bytes) {
+        return import_psd(name, bytes, ctl);
     }
     flat::import_flat(name, bytes)
 }
@@ -398,6 +470,11 @@ fn export_stages(doc: &Document, name_or_ext: &str, opts: &ExportOptions, ctl: &
     if kra::EXTENSIONS.contains(&ext.as_str()) {
         return Err(IoError::Unsupported("Krita files are import-only; save as .ora to open the layers in Krita, or .pcraft to keep everything".into()));
     }
+    if ext == "xcf" {
+        return Err(IoError::Unsupported(
+            "XCF is GIMP's own format and PhotoCraft only opens it; save as .pcraft to keep the layers, or export a flat image".into(),
+        ));
+    }
     if ext == "ora" {
         return ora::export(doc);
     }
@@ -413,7 +490,11 @@ fn export_stages(doc: &Document, name_or_ext: &str, opts: &ExportOptions, ctl: &
         ctl.check().map_err(|_| IoError::Cancelled)?;
         ctl.progress(PCRAFT_PREVIEWS_DONE);
         let previews = photocraft_format::SaveOptions { thumbnail, composite };
-        return Ok(ExportResult { bytes: photocraft_format::save_to_bytes(doc.as_ref(), &previews)?, warnings: Vec::new() });
+        let bytes = match &opts.pcraft_cache {
+            Some(cache) => cache.encode(doc.as_ref(), &previews)?,
+            None => photocraft_format::save_to_bytes(doc.as_ref(), &previews)?,
+        };
+        return Ok(ExportResult { bytes, warnings: Vec::new() });
     }
     if ext == "psd" || ext == "psb" {
         let o = PsdExportOptions {
@@ -535,7 +616,7 @@ pub fn merged_composite(file: &PsdFile) -> Result<Vec<[f32; 4]>, IoError> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_svg_input;
+    use super::{import, is_psd_input, is_svg_input};
 
     #[test]
     fn svg_extension_does_not_override_another_format_signature() {
@@ -544,5 +625,38 @@ mod tests {
         assert!(is_svg_input("drawing.svg", b"<?xml version=\"1.0\"?><svg/>"));
         assert!(is_svg_input("drawing.svgz", &[0x1f, 0x8b, 0, 0]));
         assert!(!is_svg_input("drawing.svgz", webp_header));
+    }
+
+    #[test]
+    fn photoshop_extension_reaches_the_psd_loader() {
+        // A declared .psd/.PSB/.psdt must not fall through to codecs (#5258).
+        for name in ["photo.psd", "dir/Photo.PSD", r"C:\w\a.PSB", "card.psdt"] {
+            assert!(is_psd_input(name, b"not a signature"), "{name}");
+        }
+        assert!(!is_psd_input("photo.png", b"not a signature"));
+        assert!(is_psd_input("renamed.png", b"8BPS"));
+        let err = import("photo.psd", b"not a photoshop file").expect_err("named .psd is a PSD parse, not a codec miss");
+        let msg = err.to_string();
+        assert!(msg.starts_with("PSD:"), "{msg}");
+        assert!(!msg.contains("unrecognized image format"), "{msg}");
+        // A renamed Affinity file keeps the Affinity loader (magic before the .psd suffix).
+        assert!(!super::is_psd(b"\0\xffKA"));
+    }
+
+    /// A common mislabeled download: PNG/JPEG bytes named `.psd` open from the signature,
+    /// as on main and in Photoshop.
+    #[test]
+    fn raster_bytes_named_psd_still_open() {
+        use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
+        let n = 8 * 8 * 3;
+        let img = Image::from_u8(8, 8, ChannelLayout::Rgb, vec![180; n]).unwrap();
+        let png = photocraft_codecs::encode(&img, Format::Png, &EncodeOptions::default()).unwrap();
+        let jpeg = photocraft_codecs::encode(&img, Format::Jpeg, &EncodeOptions::default()).unwrap();
+        for (name, bytes) in [("download.psd", png.as_slice()), ("scan.PSB", jpeg.as_slice())] {
+            assert!(!is_psd_input(name, bytes), "{name}");
+            let d = import(name, bytes).unwrap_or_else(|e| panic!("{name}: {e}")).document;
+            assert_eq!(d.bounds().width(), 8, "{name}");
+            assert_eq!(d.bounds().height(), 8, "{name}");
+        }
     }
 }

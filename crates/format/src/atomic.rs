@@ -25,7 +25,14 @@
 //! this module is never reached there; on `wasm32` every call returns the `std` "unsupported"
 //! error.
 //!
+//! Replacing a file also carries its metadata across — permission bits, extended attributes,
+//! the "downloaded from the internet" mark and the access-control list — so that saving a
+//! document does not quietly undo a security decision someone made about the file. That part is
+//! [`meta`], and it is best effort: it never fails a save and never touches the bytes.
+//!
 //! [`atomic_write_with`] takes an [`AtomicFs`] so tests can inject failures at each step.
+
+pub mod meta;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -54,9 +61,16 @@ pub trait AtomicFs {
     fn remove(&self, path: &Path) -> io::Result<()>;
     /// Flush a directory entry change (Unix); a no-op elsewhere.
     fn sync_dir(&self, dir: &Path) -> io::Result<()>;
-    /// Copy the destination's permissions onto the temporary file, so replacing a file keeps its
-    /// mode. Best effort.
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Copy the metadata a replacement should keep — mode, extended attributes, ACL — from the
+    /// file about to be replaced onto the temporary file. Best effort; see [`meta`].
+    fn copy_metadata(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Replace the **existing** file `to` with `from`. Everywhere but Windows this is
+    /// [`rename`](Self::rename); on Windows it keeps the destination's DACL, named streams and
+    /// creation time ([`meta::replace_existing`]). The default is `rename`, which is what the
+    /// failure-injecting test file systems want.
+    fn replace_existing(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.rename(from, to)
+    }
 }
 
 /// The real file system.
@@ -97,9 +111,11 @@ impl AtomicFs for RealFs {
             Ok(())
         }
     }
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()> {
-        let perms = std::fs::metadata(from)?.permissions();
-        std::fs::set_permissions(to, perms)
+    fn copy_metadata(&self, from: &Path, to: &Path) -> io::Result<()> {
+        meta::copy_metadata(from, to)
+    }
+    fn replace_existing(&self, from: &Path, to: &Path) -> io::Result<()> {
+        meta::replace_existing(from, to)
     }
     fn is_readonly(&self, path: &Path) -> bool {
         std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().readonly())
@@ -206,12 +222,19 @@ pub fn atomic_write_with_progress(fs: &dyn AtomicFs, retry: RenameRetry, path: &
     }
     let tmp = tmp.ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))?;
 
-    // Keep the existing file's mode (e.g. 0600) instead of the process default.
-    if target.exists() {
-        let _ = fs.copy_permissions(&target, &tmp);
+    // Keep what the file being replaced carried: its mode (e.g. 0600) instead of the process
+    // default, its extended attributes, and its ACL. Best effort, and before the swap, so the
+    // file the user ends up with never passes through a more permissive state.
+    let replacing = target.exists();
+    if replacing {
+        let _ = fs.copy_metadata(&target, &tmp);
     }
 
-    if let Err(e) = retry_rename(retry, || fs.rename(&tmp, &target)) {
+    // Replacing an existing file goes through `replace_existing`, which on Windows is the one
+    // call that can keep the destination's DACL and named streams; creating a new one is a
+    // plain rename, with nothing to preserve.
+    let swap = || if replacing { fs.replace_existing(&tmp, &target) } else { fs.rename(&tmp, &target) };
+    if let Err(e) = retry_rename(retry, swap) {
         let _ = fs.remove(&tmp);
         return Err(rename_error(e, path));
     }
