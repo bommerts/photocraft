@@ -473,8 +473,6 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
         p["x"] = json!(start[0].round());
         p["y"] = json!(start[1].round());
     }
-    // A click on a shown path starts type on that path, from the point clicked (Photoshop).
-    let on_path = if p.get("box").is_none() { path_at(app, start[0], start[1]) } else { None };
     let key = session_key(app);
     p["coalesce"] = json!(key);
     if let Ok(v) = app.run("type.create", p)
@@ -482,14 +480,6 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
     {
         if o.type_aa != "sharp" {
             let _ = app.run("type.edit", json!({"layer": id, "antialias": o.type_aa, "coalesce": key}));
-        }
-        if let Some(mut q) = on_path {
-            q["layer"] = json!(id);
-            q["at"] = json!([start[0], start[1]]);
-            q["coalesce"] = json!(key);
-            if let Err(e) = app.run("type.attachToPath", q) {
-                app.ui.status = e;
-            }
         }
         // A Type Mask's text is a hidden working layer: the canvas shows the mask overlay
         // instead, and committing turns it into the selection.
@@ -515,29 +505,9 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
     }
 }
 
-/// The shown path a Type tool click at document point (`x`, `y`) puts type on, as
-/// `type.attachToPath` params naming it (`shape`, `subpath`): the active shape layer's path, else
-/// the work path, within a few screen pixels, as in Photoshop. Only the horizontal Type tool
-/// starts path type for now; vertical type on a path is not laid out yet.
+/// The cursor and creation share the same visible, selected path hit test.
 pub(crate) fn path_at(app: &PhotocraftApp, x: f64, y: f64) -> Option<serde_json::Value> {
-    if app.ui.tool != crate::state::Tool::Type || app.ui.text_edit.is_some() || !app.ui.view.shows(app.ui.view.show.target_path) {
-        return None;
-    }
-    let tol = f64::from(6.0 / app.point_zoom().max(0.01));
-    let hit = |p: &photocraft_doc::vector::Path| {
-        let s = match photocraft_vector::edit::hit(p, Point::new(x, y), tol, &[])? {
-            photocraft_vector::edit::Hit::Anchor([s, _]) | photocraft_vector::edit::Hit::Segment([s, _], _) => s,
-            photocraft_vector::edit::Hit::Handle(..) => return None,
-        };
-        p.subpaths.get(s).filter(|sp| sp.knots.len() >= 2).map(|_| s)
-    };
-    if let Some((id, p)) = crate::vector_ui::active_shape_path(app)
-        && let Some(s) = hit(&p)
-    {
-        return Some(json!({"shape": id, "subpath": s}));
-    }
-    let work = app.session.active()?.doc.work_path.as_ref()?;
-    hit(work).map(|s| json!({"subpath": s}))
+    hit_path(app, x, y)
 }
 
 /// The Type tool's pointer over a path it can follow: Photoshop's I-beam crossed by a dotted
@@ -1301,8 +1271,7 @@ pub fn draw_overlay(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewX
     let warp = path_warp(app, id);
     // Text space → screen.
     let scr_t = |x: f32, y: f32| -> Pos2 {
-        let (x, y) = warp.as_ref().map_or((f64::from(x), f64::from(y)), |w| w.apply(f64::from(x), f64::from(y)));
-        let p = aff.apply(Point::new(x, y));
+        let p = aff.apply(Point::new(f64::from(x), f64::from(y)));
         xf.to_screen(p.x as f32, p.y as f32)
     };
     let shape = app.session.active().and_then(|s| text_layer(&s.doc, id).map(|t| t.shape.clone()));
@@ -3289,6 +3258,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+        app.ui.selected_path = Some("work".into());
         assert!(path_at(&app, 200.0, 101.0).is_some());
         assert!(path_at(&app, 200.0, 160.0).is_none(), "off the path");
         let before = app.session.active().unwrap().history.entries().len();
@@ -3322,6 +3292,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+        app.ui.selected_path = Some("work".into());
         pointer_up(&mut app, [300.0, 20.0], [300.0, 20.0]);
         insert(&mut app, "ABCDEFGH");
         let id = LayerId(app.ui.text_edit.as_ref().unwrap().layer);

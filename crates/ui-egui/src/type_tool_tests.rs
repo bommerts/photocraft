@@ -3080,6 +3080,59 @@ fn unselected_work_path_is_not_a_type_click_target() {
     app.run("path.set", json!({"name": "work", "path": {"subpaths": [{"closed": false, "knots": [[200, 200], [600, 200]]}]}})).unwrap();
     app.ui.selected_path = None;
     assert!(super::hit_path(&app, 400.0, 200.0).is_none());
+    super::pointer_up(&mut app, [400.0, 200.0], [400.0, 200.0]);
+    let id = LayerId(app.ui.text_edit.as_ref().unwrap().layer);
+    assert_eq!(text(&app, id).shape, photocraft_doc::text::TextShape::Point);
+    super::commit(&mut app);
     app.ui.selected_path = Some("work".into());
     assert!(super::hit_path(&app, 400.0, 200.0).is_some());
+}
+
+#[test]
+fn review_path_ime_caret_is_warped_once() {
+    let mut app = new_app();
+    let shape = app.run("shape.create", json!({"kind":"ellipse","rect":[160,160,480,480]})).unwrap()["layer"].as_u64().unwrap();
+    let id = LayerId(app.run("type.create", json!({"text":"HOHOHO","size":36,"path":{"shape":shape,"start":400}})).unwrap()["layer"].as_u64().unwrap());
+    super::edit_active(&mut app).unwrap();
+    let ed = app.ui.text_edit.as_mut().unwrap();
+    ed.anchor = 3;
+    ed.caret = 3;
+    let (l, aff, text) = layout(&mut app, id).unwrap();
+    let (x, top, bot) = l.caret(super::byte_of(&text, 3));
+    let warp = super::path_warp(&app, id).unwrap();
+    let xf = ViewXform {
+        rect: egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 700.0)),
+        zoom: 1.0,
+        center: [400.0, 400.0],
+        flip: false,
+        rotation: 0.0,
+        aspect: 1.0,
+    };
+    let expected = |y: f32| {
+        let (x, y) = l.to_text(x, y);
+        let (x, y) = warp.apply(f64::from(x), f64::from(y));
+        let p = aff.apply(Point::new(x, y));
+        xf.to_screen(p.x as f32, p.y as f32)
+    };
+    let expected = egui::Rect::from_two_pos(expected(top), expected(bot)).expand(1.0);
+    let mut h =
+        Harness::builder().with_size(vec2(800.0, 700.0)).build_ui_state(move |ui, app: &mut PhotocraftApp| super::draw_overlay(app, ui.painter(), &xf), app);
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ProMedium);
+    h.run_steps(2);
+    let got = h.output().platform_output.ime.as_ref().unwrap().cursor_rect;
+    assert!((got.min - expected.min).length() < 0.01 && (got.max - expected.max).length() < 0.01, "got {got:?}, expected {expected:?}");
+}
+
+#[test]
+fn selected_saved_path_wins_over_an_intersecting_work_path() {
+    let mut app = new_app();
+    app.run("path.set", json!({"name":"work","path":{"subpaths":[{"closed":false,"knots":[[400,100],[400,300]]}]}})).unwrap();
+    app.run("path.set", json!({"name":"Curve","path":{"subpaths":[{"closed":false,"knots":[[200,200],[600,200]]}]}})).unwrap();
+    app.ui.selected_path = Some("Curve".into());
+    super::pointer_up(&mut app, [400.0, 200.0], [400.0, 200.0]);
+    let id = LayerId(app.ui.text_edit.as_ref().unwrap().layer);
+    let w = super::path_warp(&app, id).unwrap();
+    let a = w.apply(0.0, 0.0);
+    let b = w.apply(10.0, 0.0);
+    assert!((b.0 - a.0 - 10.0).abs() < 0.01 && (b.1 - a.1).abs() < 0.01, "the selected horizontal saved path wins: {a:?} -> {b:?}");
 }

@@ -46,13 +46,13 @@ what an agent can't finish alone.
   constant and transparency is disabled. Variable-range synthesis, HSB/Lab modes and
   transparency remain unsupported and are preserved verbatim; the five visual examples do not
   establish Photoshop's exact noise algorithm or include this degenerate constant case.
-- **Evidence:** corpus floors (`crates/io/tests/corpus.rs`, scorecard): Photoshop-authored
+- **Evidence:** corpus floors (`crates/io/tests/it/corpus.rs`, scorecard): Photoshop-authored
   oracles 190/258 (74%; 32-bit Hue/Saturation 2026-10-22; smart filter masks 2026-10-14; CMYK and Lab adjustment layers, 32-bit unclipped adjustments, Levels, Threshold, Posterize and mask feathers 2026-10-13; Gradient Map luminosity 2026-10-13; CMYK Invert, Posterize and Threshold on the inks 2026-10-12), io corpus 148/170 (87%), psd-tools 249/309 (81%); round trips ~100%
   within the corpus. Smart-filter re-render matches 5/30. User reports: a PSD with text layers
   re-saved unmodified would not reopen (#2374, closed 2026-10-10), Photoshop 26.6 cannot reopen our files (#1281), "PSD not
   opening in Photoshop" (#2469), a CS2-era smart object unavailable (#2465, fixed 2026-10-12), PSB smart object
   blank (#1764), perspective placed layers flattened (#579, fixed by #426), PSB > 4 GB fails on Windows (#375; a generated 4.38 GB PSB opens, saves and re-opens
-  through io on Windows, io tests/large_files.rs, 2026-10-13).
+  through io on Windows, io tests/it/large_files.rs, 2026-10-13).
   No test opens our exports in a third-party editor (FILE-216-4).
 - **Impact:** PSD is the format professionals exchange. Beta requires it to be reliable.
 - **Estimate:** 150–250 h. **Human:** opening exports in Photoshop on the owner's Mac (or a
@@ -171,7 +171,7 @@ what an agent can't finish alone.
   sample depth (15520 at 14 bits, 3880 at 12), so a 12-bit D4 NEF opens as bright as the same
   scene at 14 bits instead of 2.6 stops darker (#5978). Real CC0 pair, mean linear luminance
   against the 14-bit file: 12-bit lossy +0.02, uncompressed -0.02, lossless +0.01 stop;
-  14-bit output unchanged (`cameras.rs`, `tests/nikon_d4_depth.rs`).
+  14-bit output unchanged (`cameras.rs`, `tests/it/nikon_d4_depth.rs`).
 - **Estimate:** 120–200 h.
 
 ### G15. AI and generative features
@@ -374,7 +374,7 @@ what an agent can't finish alone.
 | 2026-10-14 | minor | G14: a Nikon NEF's Adobe RGB preview is read as Adobe RGB (maker-note ColorSpace 0x001E); gap remains open |
 | 2026-10-13 | minor | G14: D90 image area measured (4288 × 2848 at (10, 10)); gap remains open |
 | 2026-10-14 | minor | Corpus floors raised to the measured results of the CMYK, Lab, 32-bit, Levels, Threshold, Posterize, feather and pass-through fixes landed together: Photoshop-authored 165 → 185 of 258, io 146 → 148 of 170, psd-tools 242 → 249 of 309 |
-| 2026-10-13 | minor | G1: generated large-file fixtures (20 MP, 150 layers, 2 GB PSD, 4.38 GB PSB) round-trip in io tests/large_files.rs; the 4.38 GB PSB opens on Windows through io (#375 evidence); FILE-216-2 done (#5107) |
+| 2026-10-13 | minor | G1: generated large-file fixtures (20 MP, 150 layers, 2 GB PSD, 4.38 GB PSB) round-trip in io tests/it/large_files.rs; the 4.38 GB PSB opens on Windows through io (#375 evidence); FILE-216-2 done (#5107) |
 | 2026-10-13 | minor | G1: CMYK Hue/Saturation and Color Balance work on C, M and Y as inverted RGB with black kept, as Photoshop does; cmyk hue-saturation 100% → 0.4–0.7% bad pixels, color-balance 74% → 25%; floor unchanged |
 | 2026-10-13 | minor | G1: CMYK Posterize works on the stored values (1 − ink); psd-tools posterize_cmyk passes; psd-tools floor → 242 of 309 |
 | 2026-10-13 | minor | G1: CMYK stacks with Invert, Posterize, Threshold, Brightness/Contrast, Levels or Curves layers composite on the document's own inks (14 CMYK oracles pass); Photoshop-oracle floor 151 → 165 of 258 |

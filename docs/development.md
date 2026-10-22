@@ -292,7 +292,7 @@ PSD placed layer, the `Idnt` uuid its duplicates share), shared contents (`smart
 every copy of the same contents has, and the number of `instances`; Replace Contents changes them
 all and lists them in its result), type
 text, adjustment settings, channels and history, so agents can verify what they did without a
-screenshot. `crates/automation/tests/agent_tasks.rs` is the reference: ten realistic edit tasks
+screenshot. `crates/automation/tests/it/agent_tasks.rs` is the reference: ten realistic edit tasks
 (title card, colour grade, undo/redo, editable smart blur, masks, saved selections, align,
 capability-scoped export, resize/crop, CMYK + native save) driven purely over MCP.
 
@@ -384,7 +384,7 @@ cargo xtask perf --update-baseline   # also write perf/baseline.json from this r
 - `perf/baseline.json`: the numbers the scorecard shows, written only by
   `cargo xtask perf --update-baseline`, with the machine (CPU, RAM, GPU adapter, OS), its machine
   class, commit, date and load average.
-- `crates/io/tests/corpus.rs`: the corpus floors (every `Source { .. }` constant).
+- `crates/io/tests/it/corpus.rs`: the corpus floors (every `Source { .. }` constant).
 - The prefs audit: `Preferences` fields that no code reads (target 0, #204), plus counts taken
   from the tree (never-crash attribute coverage, `docs/parity-checklist.md`).
 
@@ -634,12 +634,12 @@ per source with its own floors: `corpus/psd`, the psd-tools set (also a truncati
 over every file that must never panic) and our Photoshop set `corpus/photoshop` (per-feature-group
 totals: `smart-filters`, `effects`, `text`, `adjustments/<mode><bits>`). Smart objects and type
 layers composite Photoshop's cached pixels there; `cargo xtask test-corpus -p engine -- --nocapture`
-(`crates/engine/tests/photoshop_oracles.rs`) re-renders them with our smart-filter stack and text
+(`crates/engine/tests/it/photoshop_oracles.rs`) re-renders them with our smart-filter stack and text
 engine and is the failure map for both. A panic is reported as `CRASH` and fails the run. Files without a real merged image (Maximize Compatibility off)
 are judged against their embedded thumbnail instead (`PASS (thumbnail)`, a strict low-resolution
-check); a file only SKIPs when it has no oracle at all. Raise the floors in `crates/io/tests/corpus.rs` when they
+check); a file only SKIPs when it has no oracle at all. Raise the floors in `crates/io/tests/it/corpus.rs` when they
 improve; never lower them. Synthetic reproductions of corpus findings live in
-`crates/io/tests/corpus_regressions.rs` (corpus files are never committed). To dig into one file:
+`crates/io/tests/it/corpus_regressions.rs` (corpus files are never committed). To dig into one file:
 
 ```sh
 cargo run --release -p photocraft-io --example oracle_diff -- corpus/psd/<file>.psd 0 png /tmp/diff.png
