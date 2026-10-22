@@ -2795,6 +2795,7 @@ fn adjustment_make_unreadable_metadata_stays_a_kept_photoshop_step() {
         desc("AdjL").with("Opct", pct(101.0)),
         desc("AdjL").with("Opct", D::Double(f64::NAN)),
         desc("AdjL").with("Md  ", enm("BlnM", "unknownBlend")),
+        desc("AdjL").with("Md  ", enm("BlnM", "PsTh")),
         desc("AdjL").with("Md  ", text("Multiply")),
         desc("AdjL").with("Grup", text("true")),
     ] {
@@ -2821,5 +2822,26 @@ fn adjustment_make_command_rejects_bad_properties_without_editing() {
     ] {
         assert!(s.execute("layer.newAdjustmentLayer.levels", params.clone()).is_err(), "{params}");
         assert_eq!(s.active().unwrap().doc.layers.len(), 1, "{params} must not create a layer");
+    }
+}
+
+#[test]
+fn adjustment_make_export_rejects_invalid_layer_properties() {
+    for id in ["layer.newAdjustmentLayer.levels", "layer.newAdjustmentLayer.curves"] {
+        for params in [
+            json!({"name": false}),
+            json!({"name": null}),
+            json!({"opacity": "37"}),
+            json!({"opacity": -0.1}),
+            json!({"opacity": 1.1}),
+            json!({"opacity": null}),
+            json!({"blend": false}),
+            json!({"blend": "unknown"}),
+            json!({"blend": "Pass Through"}),
+            json!({"clipped": 1}),
+            json!({"clipped": null}),
+        ] {
+            assert!(export_item(id, &params, "Set").is_none(), "{id}: {params} must not silently become default metadata");
+        }
     }
 }

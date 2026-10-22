@@ -1174,7 +1174,9 @@ fn adjustment_layer_steps(a: &Adjustment, t: Option<&Descriptor>, using: Option<
             p.insert("opacity".into(), ((o * 255.0 / 100.0).round() / 255.0).into());
         }
         if u.get("Md  ").is_some() {
-            let Some(m) = get_enum(u, "Md  ").and_then(|m| blend_label(&m)) else { return Mapped::Unsupported { harmless: false } };
+            let Some(m) = get_enum(u, "Md  ").and_then(|m| blend_label(&m)).filter(|m| *m != "Pass Through") else {
+                return Mapped::Unsupported { harmless: false };
+            };
             p.insert("blend".into(), m.into());
         }
         if u.get("Grup").is_some() {
@@ -1438,15 +1440,23 @@ fn make_to(id: &str, p: &Value) -> Option<Descriptor> {
                 (a.to)(p)?
             };
             {
-                let mut u = with_name("AdjL").with("Type", D::Descriptor(t));
-                if let Some(o) = jnum(p, "opacity") {
-                    u = u.with("Opct", pct(o * 100.0));
+                let mut u = desc("AdjL").with("Type", D::Descriptor(t));
+                if p.get("name").is_some() {
+                    u = u.with("Nm  ", text(jstr(p, "name")?));
                 }
-                if let Some(m) = jstr(p, "blend") {
-                    u = u.with("Md  ", enm("BlnM", blend_ps(m)?));
+                if p.get("opacity").is_some() {
+                    let opacity = jnum(p, "opacity").filter(|o| o.is_finite() && (0.0..=1.0).contains(o))?;
+                    u = u.with("Opct", pct(opacity * 100.0));
                 }
-                if let Some(clipped) = jbool(p, "clipped") {
-                    u = u.with("Grup", D::Boolean(clipped));
+                if p.get("blend").is_some() {
+                    let mode = jstr(p, "blend")?;
+                    if crate::commands::blend_from_str(mode)? == photocraft_color::BlendMode::PassThrough {
+                        return None;
+                    }
+                    u = u.with("Md  ", enm("BlnM", blend_ps(mode)?));
+                }
+                if p.get("clipped").is_some() {
+                    u = u.with("Grup", D::Boolean(jbool(p, "clipped")?));
                 }
                 desc("null").with("null", class_ref("AdjL")).with("Usng", D::Descriptor(u))
             }

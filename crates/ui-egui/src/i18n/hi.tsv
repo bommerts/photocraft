@@ -534,3 +534,5 @@ cameraRaw	Yellow	पीला
 	Missing delete command	हटाने का कमांड नहीं मिला
 	Invalid delete command	हटाने का कमांड अमान्य है
 	Layer deleted, but confirmation preference could not be saved: {error}	लेयर हटा दी गई, लेकिन पुष्टि की प्राथमिकता सहेजी नहीं जा सकी: {error}
+
+	Continue	जारी रखें
