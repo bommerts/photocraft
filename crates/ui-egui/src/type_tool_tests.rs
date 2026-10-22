@@ -2545,3 +2545,32 @@ fn justify_buttons_are_greyed_on_point_text() {
     h.run_steps(4);
     assert!(h.get_by_label("Justify all").accesskit_node().is_disabled(), "one of the formatted layers is point text");
 }
+
+/// A paragraph-box drag keeps its geometry even when the press hits a path outline.
+#[test]
+fn path_text_does_not_take_over_paragraph_box_drags() {
+    for ppp in [1.0, 2.0] {
+        for zoom in [0.5, 1.0, 2.0] {
+            let mut app = new_app();
+            app.ui.extras.snap = false;
+            app.run("shape.create", json!({"kind": "ellipse", "rect": [600, 300, 400, 300]})).unwrap();
+            let mut h = harness(ppp, app);
+            let view = &mut h.state_mut().ui.views[0];
+            (view.zoom, view.center, view.fit_pending) = (zoom, [800.0, 450.0], false);
+            h.run_steps(2);
+            assert!(super::hit_path(h.state(), 800.0, 300.0).is_some());
+            let before = h.state().session.active().unwrap().history.past_len();
+            let a = xf(h.state()).to_screen(800.0, 300.0);
+            let b = xf(h.state()).to_screen(1000.0, 500.0);
+            drag(&mut h, a, b);
+            let id = LayerId(h.state().ui.text_edit.as_ref().expect("new paragraph edit").layer);
+            let layer = text(h.state(), id);
+            assert!(
+                matches!(layer.shape, photocraft_doc::text::TextShape::Box { width, height, .. } if (width - 200.0).abs() < 1.0 && (height - 200.0).abs() < 1.0),
+                "ppp {ppp}, zoom {zoom}: {:?}",
+                layer.shape
+            );
+            assert_eq!(h.state().session.active().unwrap().history.past_len(), before + 1);
+        }
+    }
+}

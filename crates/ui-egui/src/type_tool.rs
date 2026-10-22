@@ -443,10 +443,10 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
         "align": o.type_align,
         "color": hex(app.session.tools.foreground),
     });
-    if let Some(path) = hit_path(app, start[0], start[1]) {
-        p["path"] = path;
-    } else if w >= min && h >= min {
+    if w >= min && h >= min {
         p["box"] = json!([start[0].min(end[0]).round(), start[1].min(end[1]).round(), w.round(), h.round()]);
+    } else if let Some(path) = hit_path(app, start[0], start[1]) {
+        p["path"] = path;
     } else {
         p["x"] = json!(start[0].round());
         p["y"] = json!(start[1].round());

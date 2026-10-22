@@ -531,3 +531,27 @@ fn a_document_without_type_never_waits_for_the_text_engine() {
     text_layer(&mut s, "type");
     assert!(has_type_layers(&s.active().unwrap().doc));
 }
+
+/// Reject unsupported vertical path creation before it can change layers or history.
+#[test]
+fn path_text_creation_rejects_vertical_without_changing_the_document() {
+    for depth in [8, 16, 32] {
+        let mut s = session(depth);
+        let shape = s.execute("shape.create", json!({"kind": "ellipse", "rect": [20, 20, 80, 80]})).unwrap()["layer"].as_u64().unwrap();
+        let before = s.active().unwrap().history.past_len();
+        let count = s.active().unwrap().doc.walk().len();
+        let active = s.active().unwrap().active_layer;
+        let result = s.execute("type.create", json!({"text": "Vertical", "orientation": "vertical", "path": {"shape": shape}}));
+        assert!(
+            matches!(&result, Err(EngineError::BadParams { cmd, msg }) if cmd == "type.create" && msg == "vertical path text is not supported"),
+            "{result:?}"
+        );
+        assert_eq!(s.active().unwrap().history.past_len(), before);
+        assert_eq!(s.active().unwrap().doc.walk().len(), count);
+        assert_eq!(s.active().unwrap().active_layer, active);
+        let result = s.execute("type.create", json!({"text": "Vertical", "orientation": "vertical"})).unwrap();
+        let id = LayerId(result["layer"].as_u64().unwrap());
+        assert_eq!(text(&s, id).orientation, Orientation::Vertical);
+        assert!(matches!(text(&s, id).shape, TextShape::Point));
+    }
+}

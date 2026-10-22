@@ -1,6 +1,6 @@
 # PhotoCraft vs Adobe Photoshop: target-app parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-21 · **Change:** minor (horizontal Type tool path text, #1082; Content-Aware Move live preview for every selection size, TOOL-213-4 done, #6680; retouching evidence: Pattern Stamp and Background Eraser draw live, only the Mixer Brush is left of TOOL-213-7; fill and adjustment layers copy and paste whole, UI-217-23 partial, #2344; shape layers take Density and Feather, TOOL-214-12 done, #5846; on-canvas corner radius widgets, TOOL-214-12; `.atn` import maps 112 events; Free Transform H/V skew fields; stale rows corrected against `main` and the scorecard, estimates unchanged; Photoshop Actions `.atn` load and save; 2026-10-10: Tilt-Shift measurements added; earlier the same day: major, full re-measure against Photoshop 2026 27.11.0; merged `parity-estimate.md` and the roadmap's honest assessment; stale missing-tool rows corrected: Color Replacement and Red Eye are live toolbar tools, Frame landed; percentages unchanged) · **Target:** Adobe Photoshop 2026
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-22 · **Change:** minor (horizontal Type tool path text, #1082; Content-Aware Move live preview for every selection size, TOOL-213-4 done, #6680; retouching evidence: Pattern Stamp and Background Eraser draw live, only the Mixer Brush is left of TOOL-213-7; fill and adjustment layers copy and paste whole, UI-217-23 partial, #2344; shape layers take Density and Feather, TOOL-214-12 done, #5846; on-canvas corner radius widgets, TOOL-214-12; `.atn` import maps 112 events; Free Transform H/V skew fields; stale rows corrected against `main` and the scorecard, estimates unchanged; Photoshop Actions `.atn` load and save; 2026-10-10: Tilt-Shift measurements added; earlier the same day: major, full re-measure against Photoshop 2026 27.11.0; merged `parity-estimate.md` and the roadmap's honest assessment; stale missing-tool rows corrected: Color Replacement and Red Eye are live toolbar tools, Frame landed; percentages unchanged) · **Target:** Adobe Photoshop 2026
 
 The authoritative answer to "how close is PhotoCraft to Photoshop, and how much work is left". The
 one-page summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is [`gaps.md`](gaps.md);
@@ -565,6 +565,7 @@ See [method, raw measurements and reproduction](five-algorithm-performance.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Path-text review: paragraph drags starting on paths keep their box; unsupported vertical path creation fails before changing layers or history. Parity and estimates unchanged. |
 | 2026-10-21 | minor | Refreshed horizontal path text against current main; preserve Pen anchors, saved-path overlays and upstream type progress. Estimates unchanged. |
 | 2026-10-18 | minor | Layers: with no selection, Copy takes fill and adjustment layers whole and Paste recreates them (#2344); UI-217-23 stays partial; percentages unchanged |
 | 2026-10-16 | minor | Content-Aware Move: live result preview for every selection the command takes (TOOL-213-4 done, #6680); percentages unchanged |
