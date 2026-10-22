@@ -268,6 +268,8 @@ pub enum ContentM {
     },
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_name: Option<String>,
         font_family: String,
         size_pt: f32,
         color: Color,
@@ -378,6 +380,23 @@ pub struct MetadataM {
     pub psd_resources: Vec<(u16, String, Hash)>,
     /// (signature hex, key hex, blob)
     pub psd_global_blocks: Vec<(String, String, Hash)>,
+}
+
+#[cfg(test)]
+mod text_name_tests {
+    use super::*;
+
+    #[test]
+    fn older_text_without_auto_name_remains_unmarked() {
+        let old = serde_json::json!({
+            "kind": "text", "text": "Heading", "font_family": "Inter", "size_pt": 12.0,
+            "color": Color::BLACK, "transform": Affine::IDENTITY, "cache": null, "psd_raw": null
+        });
+        let content: ContentM = serde_json::from_value(old).unwrap();
+        let ContentM::Text { auto_name, .. } = &content else { panic!("not text") };
+        assert_eq!(auto_name, &None);
+        assert!(serde_json::to_value(content).unwrap().get("auto_name").is_none());
+    }
 }
 
 #[cfg(test)]

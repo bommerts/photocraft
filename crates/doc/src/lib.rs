@@ -389,6 +389,9 @@ impl Fill {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextLayer {
     pub text: String,
+    /// Exact generated copy label, while the name still follows the text. Never inferred from
+    /// a "copy" suffix: a user can deliberately choose the same spelling for a custom label.
+    pub auto_name: Option<String>,
     pub font_family: String,
     pub size_pt: f32,
     pub color: Color,
@@ -415,6 +418,7 @@ impl Default for TextLayer {
     fn default() -> Self {
         Self {
             text: String::new(),
+            auto_name: None,
             font_family: String::new(),
             size_pt: 12.0,
             color: Color::BLACK,
