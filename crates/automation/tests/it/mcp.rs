@@ -789,7 +789,7 @@ async fn doc_export_layers_reports_skipped_layers() {
             {"layer": adjustment, "name": "Levels/α", "reason": "adjustment layer has no pixels of its own"}
         ])
     );
-    let all = json_of(&call(&client, "doc_export_layers", json!({"dir": "all", "visibleOnly": false})).await);
+    let all = json_of(&call(&client, "doc_export_layers", json!({"dir": "all", "visible_only": false})).await);
     assert_eq!(all["count"], 2);
     assert_eq!(all["skipped"].as_array().unwrap().len(), 1);
     assert_eq!(std::fs::read_dir(base.join("layers")).unwrap().count(), 1);

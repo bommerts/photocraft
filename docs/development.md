@@ -263,7 +263,7 @@ Tools:
 `doc_export_layers` in workspace headless mode returns `{files, count, skipped}`. `count` is
 only the number of files written. Each skipped top-level layer is reported as
 `{layer, name, reason}` (session id, original name, explanation); `skipped` is `[]` when every
-layer exports. Hidden layers are reported when `visibleOnly` is true (the default), and
+layer exports. Hidden layers are reported when `visible_only` is true (the default; `visibleOnly` in the engine/serve params), and
 standalone adjustments are reported because they have no pixels of their own. Groups still
 export merged, so their children are not separate skips. Filename numbering is unchanged;
 encoding or write failures remain errors. The engine command and trusted-local exports add
