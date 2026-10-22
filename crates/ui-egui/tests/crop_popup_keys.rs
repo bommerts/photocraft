@@ -55,6 +55,9 @@ fn setup() -> Option<Harness> {
     h.run_steps(3);
     h.get_by_label("1 : 1 (Square)").click();
     h.run_steps(3);
+    // Picking a ratio only fits the untouched default frame; a keyed edit makes it a drawn one.
+    assert!(photocraft_ui_egui::crop_ui::nudge(h.state_mut(), 0.0, 0.0));
+    h.run_steps(3);
     assert!(photocraft_ui_egui::crop_ui::pending(h.state()), "the 1:1 frame is pending");
     assert!(!egui::Popup::is_any_open(&h.ctx), "the list closed after the pick");
     h.get_by_value("1 : 1 (Square)").click();

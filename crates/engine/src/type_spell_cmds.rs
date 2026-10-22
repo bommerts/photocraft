@@ -16,7 +16,7 @@ use photocraft_text::spell::Dictionary;
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, layer_param};
-use crate::type_cmds::{check_text_unlocked, norm_text, refresh, replace_text};
+use crate::type_cmds::{check_text_unlocked, norm_text, refresh_at, replace_text};
 use crate::{EngineError, Result, Session};
 
 fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
@@ -131,10 +131,10 @@ fn change(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("the text at {start}..{end} is {:?}, not {w:?}", &t[a..b])));
     }
     s.edit("Check Spelling", |doc, _| {
-        let snapshot = doc.clone();
+        let (dpi, format) = (doc.resolution_dpi, doc.pixel_format());
         if let Some(LayerContent::Text(t)) = doc.layer_mut(id).map(|l| &mut l.content) {
             replace_text(t, a, b, &to);
-            refresh(&snapshot, t);
+            refresh_at(dpi, format, t);
         }
         Ok(())
     })?;
@@ -158,13 +158,13 @@ fn change_all(s: &mut Session, p: &Value) -> Result<Value> {
     let count: usize = plan.iter().map(|(_, h)| h.len()).sum();
     if count > 0 {
         s.edit("Check Spelling", |doc, _| {
-            let snapshot = doc.clone();
+            let (dpi, format) = (doc.resolution_dpi, doc.pixel_format());
             for (id, hits) in &plan {
                 if let Some(LayerContent::Text(t)) = doc.layer_mut(*id).map(|l| &mut l.content) {
                     for (a, b) in hits.iter().rev() {
                         replace_text(t, *a, *b, &to);
                     }
-                    refresh(&snapshot, t);
+                    refresh_at(dpi, format, t);
                 }
             }
             Ok(())
@@ -244,10 +244,10 @@ fn insert_text(s: &mut Session, p: &Value) -> Result<Value> {
     let (ba, bb) = (byte_at(t, a), byte_at(t, b));
     let label = p.get("label").and_then(Value::as_str).unwrap_or("Insert Glyph").to_string();
     s.edit(&label, |doc, _| {
-        let snapshot = doc.clone();
+        let (dpi, format) = (doc.resolution_dpi, doc.pixel_format());
         if let Some(LayerContent::Text(t)) = doc.layer_mut(id).map(|l| &mut l.content) {
             replace_text(t, ba, bb, &new);
-            refresh(&snapshot, t);
+            refresh_at(dpi, format, t);
         }
         Ok(())
     })?;

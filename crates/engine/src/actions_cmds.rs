@@ -410,13 +410,18 @@ pub fn finish_playback(s: &mut Session, recording: Option<(usize, usize)>, actio
     s.actions.playback_stack.pop();
     s.actions.playing = s.actions.playing.saturating_sub(1);
     if let Some((_, idx)) = recording {
-        s.actions.recording = Some((s.journal.len(), idx));
-        let mut params = json!({"action": action.name});
-        if from > 0 {
-            params["from"] = json!(from);
-        }
-        s.journal.push(("actions.play".into(), params));
+        restore_recording(s, idx, &action.name, from);
     }
+}
+
+/// Resume recording into action `idx` and journal the named call that suspended it.
+pub fn restore_recording(s: &mut Session, idx: usize, action: &str, from: usize) {
+    s.actions.recording = Some((s.journal.len(), idx));
+    let mut params = json!({"action": action});
+    if from > 0 {
+        params["from"] = json!(from);
+    }
+    s.journal.push(("actions.play".into(), params));
 }
 
 /// Nested playback returns a structured failure even though the command itself succeeded.
@@ -1160,6 +1165,43 @@ mod tests {
             let active = replay.active().unwrap().active_layer.unwrap();
             assert_eq!(replay.active().unwrap().doc.layer(active).unwrap().name, "Retouched copy");
         }
+    }
+
+    /// An Alt-drag copy records `inPlace` (#7200), which only matters for an artboard: a plain
+    /// layer's recorded copy must still export to .atn, while an artboard's must be refused rather
+    /// than exported as a copy beside the original.
+    #[test]
+    fn recorded_in_place_duplicate_keeps_in_place_only_for_artboards() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
+        s.execute("actions.record", json!({"name": "Layer copy"})).unwrap();
+        s.execute("layer.duplicate", json!({"inPlace": true})).unwrap();
+        s.execute("actions.stop", json!({})).unwrap();
+        s.execute("layer.new.artboard", json!({"name": "Board", "rect": [0, 0, 8, 8]})).unwrap();
+        s.execute("actions.record", json!({"name": "Board copy"})).unwrap();
+        s.execute("layer.duplicate", json!({"inPlace": true})).unwrap();
+        s.execute("actions.stop", json!({})).unwrap();
+        assert_eq!(s.actions.list[0].steps, vec![("layer.duplicate".to_string(), json!({}))]);
+        assert_eq!(s.actions.list[1].steps, vec![("layer.duplicate".to_string(), json!({"inPlace": true}))]);
+        assert!(crate::atn_cmds::export("Audit", &[&s.actions.list[0]], &[], false).is_ok());
+        assert!(crate::atn_cmds::export("Audit", &[&s.actions.list[1]], &[], false).is_err());
+        // Several selected layers are copied together: one artboard among them keeps `inPlace`.
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
+        let photo = s.active().unwrap().active_layer.unwrap();
+        s.execute("layer.new.layer", json!({"name": "Logo"})).unwrap();
+        s.execute("layer.select", json!({"layer": photo.0, "mode": "add"})).unwrap();
+        s.execute("actions.record", json!({"name": "Layers copy"})).unwrap();
+        s.execute("layer.duplicate", json!({"inPlace": true})).unwrap();
+        s.execute("actions.stop", json!({})).unwrap();
+        assert_eq!(s.active().unwrap().selected_layers().len(), 2, "both layers were copied");
+        s.execute("layer.new.artboard", json!({"name": "Board", "rect": [0, 0, 8, 8]})).unwrap();
+        s.execute("layer.select", json!({"layer": photo.0, "mode": "add"})).unwrap();
+        s.execute("actions.record", json!({"name": "Mixed copy"})).unwrap();
+        s.execute("layer.duplicate", json!({"inPlace": true})).unwrap();
+        s.execute("actions.stop", json!({})).unwrap();
+        assert_eq!(s.actions.list[0].steps, vec![("layer.duplicate".to_string(), json!({}))]);
+        assert_eq!(s.actions.list[1].steps, vec![("layer.duplicate".to_string(), json!({"inPlace": true}))]);
     }
 
     #[test]

@@ -12,7 +12,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -111,12 +111,36 @@ impl Endpoint {
         .find(Endpoint::reachable)
     }
 
-    /// `server` as a socket path (starts with `/`) or `host[:port]` (port 631 by default).
+    /// `server` as a socket path (starts with `/`) or `host[:port]` (port 631 by default). An IPv6
+    /// server is `[address]` or `[address]:port`; written bare (more than one `:`) it keeps the
+    /// default port, because its last `:` cannot be told apart from a port separator. Anything else
+    /// after the bracket (`[::1]:abc`) stays the host, so a mistyped endpoint cannot resolve rather
+    /// than quietly becoming the default one.
     pub fn parse(server: &str) -> Endpoint {
         if server.starts_with('/') {
             return Endpoint::Unix(PathBuf::from(server));
         }
-        let (host, port) = server.rsplit_once(':').and_then(|(h, p)| p.parse().ok().map(|p| (h.to_string(), p))).unwrap_or((server.to_string(), 631));
+        // `[IPv6]:port` - the brackets tell the address from the port, and are not part of the host.
+        if let Some(rest) = server.strip_prefix('[')
+            && let Some((host, tail)) = rest.split_once(']')
+        {
+            // Nothing after the bracket, or a real `:port`, is understood. Anything else (`[::1]:abc`,
+            // `[::1]:70000`, `[::1]junk`) keeps the whole string as the host, so the mistyped endpoint
+            // stays unresolvable instead of quietly becoming the default one.
+            let port = if tail.is_empty() {
+                631
+            } else if let Some(port) = tail.strip_prefix(':').and_then(|p| p.parse().ok()) {
+                port
+            } else {
+                return Endpoint::Tcp(server.to_string(), 631);
+            };
+            return Endpoint::Tcp(host.to_string(), port);
+        }
+        // A bare IPv6 literal has more than one ':', so splitting on the last one would cut the
+        // address in half: it is the host, and the port stays the default. A zone id (`fe80::1%eth0`)
+        // carries no ':', so there a port can still follow the address.
+        let host_port = if server.matches(':').count() > 1 && !server.contains('%') { None } else { server.rsplit_once(':') };
+        let (host, port) = host_port.and_then(|(h, p)| p.parse().ok().map(|p| (h.to_string(), p))).unwrap_or((server.to_string(), 631));
         Endpoint::Tcp(host, port)
     }
 
@@ -142,17 +166,23 @@ impl Endpoint {
             Endpoint::Tcp(host, port) => {
                 let addr = (host.as_str(), *port).to_socket_addrs().map_err(|e| Error::Unreachable(format!("{host}:{port}: {e}")))?.next();
                 let addr = addr.ok_or_else(|| Error::Unreachable(format!("{host}:{port}: no address")))?;
-                let s = TcpStream::connect_timeout(&addr, CONNECT).map_err(|e| Error::Unreachable(format!("{host}:{port}: {e}")))?;
-                let _ = s.set_read_timeout(Some(REQUEST));
-                let _ = s.set_write_timeout(Some(REQUEST));
-                Ok(Stream::Tcp(s))
+                open_tcp(host, *port, addr, |addr| TcpStream::connect_timeout(&addr, CONNECT))
             }
         }
     }
 
+    /// The endpoint as an HTTP authority: an IPv6 host is bracketed, or its last colon reads as the
+    /// port separator and the request carries a host CUPS has never heard of. A scoped address keeps
+    /// its zone id and writes it escaped as "%25": "%" is not valid inside an authority (RFC 3986
+    /// section 3.2.2 reserves it for escaping), and the escaped form is what CUPS, curl and the
+    /// ipp:// URIs CUPS writes use for a zone. RFC 9844 (Aug 2025) obsoleted RFC 6874, which had made
+    /// that form URI syntax, so this is interop rather than a standard; dropping the zone instead
+    /// would name a different host on the wire than the socket was opened to. The socket still gets
+    /// the raw address%zone, which is the form a resolver understands.
     fn host(&self) -> String {
         match self {
             Endpoint::Unix(_) => "localhost".into(),
+            Endpoint::Tcp(host, port) if host.contains(':') => format!("[{}]:{port}", host.replace('%', "%25")),
             Endpoint::Tcp(host, port) => format!("{host}:{port}"),
         }
     }
@@ -162,9 +192,20 @@ impl std::fmt::Display for Endpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Endpoint::Unix(p) => write!(f, "{}", p.display()),
+            Endpoint::Tcp(h, p) if h.contains(':') => write!(f, "[{h}]:{p}"),
             Endpoint::Tcp(h, p) => write!(f, "{h}:{p}"),
         }
     }
+}
+
+/// Open one address and put the request timeouts on it. The connect call is a parameter so the
+/// refusal path can be tested at all: no port is guaranteed to stay free between picking one and
+/// using it, and what a refused connect reported is what the caller is supposed to hear.
+fn open_tcp(host: &str, port: u16, addr: SocketAddr, open: impl FnOnce(SocketAddr) -> std::io::Result<TcpStream>) -> Result<Stream> {
+    let s = open(addr).map_err(|e| Error::Unreachable(format!("{host}:{port}: {e}")))?;
+    let _ = s.set_read_timeout(Some(REQUEST));
+    let _ = s.set_write_timeout(Some(REQUEST));
+    Ok(Stream::Tcp(s))
 }
 
 enum Stream {

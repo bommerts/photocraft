@@ -79,7 +79,7 @@ fn decodes_4bit_and_monochrome_palettes() {
 fn rejects_truncated_and_overshooting_rle_without_panicking() {
     let mut b = header(8, 3, 2, 1, 2);
     assert!(decode_as(Format::Pcx, &b).is_err(), "header alone is truncated");
-    b.extend([0xc5, 0xff]); // a five-pixel run cannot cross a two-byte row
+    b.extend([0xc7, 0xff]); // a seven-byte run cannot cross a six-byte scanline
     assert!(decode_as(Format::Pcx, &b).is_err());
     let mut b = header(8, 3, 2, 1, 2);
     b.extend([0xc1]); // missing run value
@@ -97,4 +97,22 @@ fn refuses_headers_that_exceed_allocation_budget() {
     assert!(matches!(photocraft_codecs::decode_as_with(Format::Pcx, &b, &opts), Err(CodecError::LimitExceeded(_))));
     b[2] = 0;
     assert_eq!(detect(&b), None, "unsupported uncompressed encoding");
+}
+
+#[test]
+fn decodes_rgb_runs_across_planes() {
+    let mut b = header(8, 3, 2, 1, 2);
+    b.extend([0xc4, 0xff, 0xc2, 0]);
+    let im = decode(&b).unwrap();
+    assert_eq!(im.data(), &[255, 255, 0, 255, 255, 0]);
+    let png = encode(&im, Format::Png, &Default::default()).unwrap();
+    assert_eq!(decode(&png).unwrap().data(), im.data());
+}
+
+#[test]
+fn decodes_four_plane_runs_across_planes() {
+    let mut b = header(1, 4, 2, 1, 2);
+    b[16 + 15 * 3..16 + 16 * 3].copy_from_slice(&[255, 255, 0]);
+    b.extend([0xc8, 0xff]);
+    assert_eq!(decode(&b).unwrap().data(), &[255, 255, 0, 255, 255, 0]);
 }
