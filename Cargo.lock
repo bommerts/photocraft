@@ -4716,8 +4716,8 @@ dependencies = [
  "photocraft-doc",
  "photocraft-engine",
  "photocraft-format",
- "photocraft-geom",
  "photocraft-io",
+ "photocraft-raw",
  "rmcp",
  "rustix 1.1.5",
  "schemars",
@@ -4736,6 +4736,7 @@ dependencies = [
  "photocraft-engine",
  "photocraft-format",
  "photocraft-io",
+ "photocraft-raw",
  "serde_json",
  "tokio",
  "winresource",
@@ -5018,9 +5019,6 @@ name = "photocraft-testkit"
 version = "0.12.0"
 dependencies = [
  "memory-stats",
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
  "serde_json",
 ]
 
@@ -5076,6 +5074,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sys-locale",
+ "tempfile",
  "toml",
  "unicode-bidi",
  "winsafe",

@@ -248,7 +248,8 @@ fn clicking_shape_with_path_selection_selects_its_layer() {
     assert_eq!(h.state().session.active().unwrap().active_layer.unwrap().0, rect_layer);
 }
 
-/// Work paths remain visible (outline) regardless of the active tool. Before the fix,
+/// A work path selected in the Paths panel remains visible (outline) regardless of the active tool
+/// (one that is not selected is hidden, #6551). Before the fix,
 /// `draw_overlay` was gated on `vector_tool` so paths disappeared when switching to Brush, Move,
 /// etc. This test renders the canvas with a Brush tool active and a work path present, then
 /// confirms the path's outline pixels are painted in the accent colour, proving the path is drawn.

@@ -14,9 +14,9 @@ note = "TextShape::Path with rigid glyph placement by arc length, type.attachToP
 [[item]]
 id = "TYPE-218-2"
 target = "Paragraph direction (Auto/LTR/RTL) in the panel and options bar; visual RTL caret"
-status = "missing"
+status = "partial"
 issue = 218
-note = "Engine has TextDirection (text.rs:155); no UI"
+note = "Paragraph section (Window > Paragraph and Properties) and the options bar have Auto / Left-to-right / Right-to-left buttons setting the paragraph direction through type.setStyle; the options bar's choice is also the direction new type starts with (type_tool.rs direction_items; paragraph_direction_buttons_set_and_show_the_direction, options_bar_direction_sets_selected_layers_and_new_type). Still missing: visual RTL caret (the arrow keys move in logical order), and PSD doesn't store the direction (crates/text psd.rs neither reads nor writes it, so it reopens as Auto)"
 
 [[item]]
 id = "TYPE-218-3"

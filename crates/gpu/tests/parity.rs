@@ -711,6 +711,29 @@ fn lookup(n: usize, tetrahedral: bool, dither: bool) -> Adjustment {
     Adjustment::ColorLookup { name: "test".into(), lut: Some(std::sync::Arc::new(t)), size: n as u32, tetrahedral, dither }
 }
 
+/// 32-bit Hue/Saturation on colours at and above HSL lightness 1 and with a negative channel,
+/// where the HSL saturation divides by zero: the GPU scales the chroma as the CPU does
+/// (compose::adjust::hue_saturation_in), finite and unclipped.
+#[test]
+fn hdr_hue_saturation_bright_colours() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = Document::new("t", Size::new(4, 1), ColorMode::Rgb, SampleType::F32);
+    let mut bg = Layer::raster("bg", d.pixel_format());
+    let px = [2.0, 0.0, 0.0, 1.0, 0.25, -0.25, 0.0, 1.0, 1.1, 0.9, 1.0, 1.0, 0.55, 0.45, 0.5, 1.0];
+    bg.surface_mut().unwrap().write_region(Rect::from_xywh(0, 0, 4, 1), &px);
+    d.layers.push(bg);
+    for (hue, saturation) in [(40.0, 0.0), (0.0, 25.0), (0.0, -25.0), (40.0, 75.0)] {
+        let hs = Adjustment::HueSaturation { hue, saturation, lightness: 0.0, colorize: false, ranges: HueRange::defaults() };
+        d.layers.push(Layer::new("hs", LayerContent::Adjustment(hs)));
+        check(&mut g, &d, &format!("hue {hue} saturation {saturation} on bright colours"));
+        d.layers.pop();
+    }
+    // A PSD can store a Colorize saturation beyond 100: clamped before the 32-bit scaling on both.
+    let hs = Adjustment::HueSaturation { hue: 200.0, saturation: 150.0, lightness: 50.0, colorize: true, ranges: HueRange::defaults() };
+    d.layers.push(Layer::new("hs", LayerContent::Adjustment(hs)));
+    check(&mut g, &d, "colorize saturation 150");
+}
+
 #[test]
 fn adjustment_layers() {
     let Some(mut g) = gpu() else { return };
@@ -730,6 +753,14 @@ fn adjustment_layers() {
         let pf = Adjustment::PhotoFilter { color: [0.93, 0.54, 0.0], density: 0.6, preserve_luminosity: true };
         d.layers.push(Layer::new("pf", LayerContent::Adjustment(pf)));
         check(&mut g, &d, &format!("photo filter {depth:?}"));
+        // Colorize: the saturation scaled by 1 - |lightness| at 32 bits (compose::adjust::colorize_saturation).
+        let hs = Adjustment::HueSaturation { hue: -160.0, saturation: 40.0, lightness: 5.0, colorize: true, ranges: HueRange::defaults() };
+        d.layers.push(Layer::new("hs", LayerContent::Adjustment(hs)));
+        check(&mut g, &d, &format!("colorize {depth:?}"));
+        // Hue/Saturation: at 32 bits the raised saturation isn't clipped.
+        let hs = Adjustment::HueSaturation { hue: 40.0, saturation: 25.0, lightness: -10.0, colorize: false, ranges: HueRange::defaults() };
+        d.layers.push(Layer::new("hs2", LayerContent::Adjustment(hs)));
+        check(&mut g, &d, &format!("hue/saturation {depth:?}"));
         // Threshold: whole 16-bit samples against the level in 16 bits, or the float luminosity.
         d.layers.push(Layer::new("th", LayerContent::Adjustment(Adjustment::Threshold { level: 0.5 })));
         check(&mut g, &d, &format!("threshold {depth:?}"));
@@ -793,6 +824,19 @@ fn groups_masks_and_clipping() {
         c2.clipped = true;
         d.layers.extend([base, c1, c2]);
         check(&mut g, &d, &format!("clipping hidden={hidden}"));
+    }
+    // #3052/#4921: a clipped Dissolve layer retains opacity/fill binary coverage
+    // across the partially covered clipping base; the GPU must match the CPU.
+    for (opacity, fill) in [(0.4, 1.0), (0.8, 0.5)] {
+        let mut d = base_doc(56, 44);
+        let base = noise_layer("base", PixelFormat::RGBA8, Rect::new(5, 6, 48, 40), 45, 0.0);
+        let mut clip = noise_layer("dissolve clip", PixelFormat::RGBA8, d.bounds(), 46, 0.0);
+        clip.clipped = true;
+        clip.blend = BlendMode::Dissolve;
+        clip.opacity = opacity;
+        clip.fill_opacity = fill;
+        d.layers.extend([base, clip]);
+        check(&mut g, &d, "clipped Dissolve opacity/fill CPU/GPU parity");
     }
     // Clipped group base (isolated) with a clipped layer.
     let mut d = base_doc(56, 44);
@@ -1534,6 +1578,14 @@ fn effect_cases() -> Vec<(&'static str, Vec<Effect>)> {
     let mut bevel_contour = bevel(BevelStyle::InnerBevel, true, 8.0, 3.0);
     bevel_contour.gloss_contour = contour();
     bevel_contour.use_global_light = false;
+    // #7360: a gloss contour that starts at 100 % (Rolling Slope - Descending), as on the type in
+    // the report; its flat face and slopes take the contour-mapped shading on both renderers.
+    let mut bevel_gloss_high = bevel(BevelStyle::InnerBevel, true, 8.0, 2.0);
+    bevel_gloss_high.gloss_contour = Contour::Custom {
+        name: "descending".into(),
+        points: vec![Cp { input: 0.0, output: 1.0 }, Cp { input: 0.4, output: 0.4 }, Cp { input: 1.0, output: 0.0 }],
+        corners: vec![],
+    };
     vec![
         ("drop shadow", vec![Effect::DropShadow(shadow(BlendMode::Multiply, 0.75, 120.0, 6.0, 8.0, 0.0))]),
         ("drop shadow spread contour", vec![Effect::DropShadow(ds_contour)]),
@@ -1559,6 +1611,29 @@ fn effect_cases() -> Vec<(&'static str, Vec<Effect>)> {
             vec![Effect::InnerGlow(glow(FxPaint::Color(Color::rgb(0.2, 1.0, 0.8)), GlowTechnique::Precise, 6.0, 0.3, GlowSource::Edge))],
         ),
         ("inner glow precise center", vec![Effect::InnerGlow(glow(pat_paint.clone(), GlowTechnique::Precise, 5.0, 0.0, GlowSource::Center))]),
+        // Dissolve effects (#6995): the same speckle as the CPU, pixel for pixel.
+        (
+            "outer glow dissolve",
+            vec![Effect::OuterGlow(Glow {
+                common: FxCommon::new(BlendMode::Dissolve, 0.8),
+                ..glow(FxPaint::Color(Color::rgb(1.0, 0.9, 0.2)), GlowTechnique::Softer, 10.0, 0.3, GlowSource::Edge)
+            })],
+        ),
+        (
+            "inner glow dissolve gradient",
+            vec![Effect::InnerGlow(Glow {
+                common: FxCommon::new(BlendMode::Dissolve, 1.0),
+                ..glow(FxPaint::Gradient(gradient()), GlowTechnique::Softer, 7.0, 0.1, GlowSource::Edge)
+            })],
+        ),
+        ("drop shadow dissolve", vec![Effect::DropShadow(shadow(BlendMode::Dissolve, 0.75, 120.0, 6.0, 8.0, 0.0))]),
+        (
+            "stroke outside dissolve",
+            vec![Effect::Stroke(StrokeFx {
+                common: FxCommon::new(BlendMode::Dissolve, 0.6),
+                ..stroke(4.0, StrokePosition::Outside, FxPaint::Color(Color::rgb(0.1, 0.2, 0.9)))
+            })],
+        ),
         ("bevel inner", vec![Effect::BevelEmboss(bevel(BevelStyle::InnerBevel, true, 7.0, 2.0))]),
         ("bevel outer", vec![Effect::BevelEmboss(bevel(BevelStyle::OuterBevel, true, 6.0, 0.0))]),
         ("bevel emboss down", vec![Effect::BevelEmboss(bevel(BevelStyle::Emboss, false, 8.0, 1.0))]),
@@ -1600,6 +1675,7 @@ fn effect_cases() -> Vec<(&'static str, Vec<Effect>)> {
             })],
         ),
         ("bevel contour own light", vec![Effect::BevelEmboss(bevel_contour)]),
+        ("bevel gloss starting high", vec![Effect::BevelEmboss(bevel_gloss_high)]),
         ("satin", vec![Effect::Satin(satin)]),
         ("satin inverted contour", vec![Effect::Satin(satin_inv)]),
         ("stroke outside colour", vec![Effect::Stroke(stroke(4.0, StrokePosition::Outside, FxPaint::Color(Color::rgb(0.95, 0.85, 0.1))))]),
@@ -2891,5 +2967,62 @@ fn soft_shapes_match_the_cpu() {
                 check(&mut g, &d, &what);
             }
         }
+    }
+}
+
+/// An adjustment has no standalone source alpha: its opacity and mask gate binary coverage.
+#[test]
+fn dissolve_adjustment_matches_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = base_doc(64, 48);
+    let mut adjustment = Layer::new("invert", LayerContent::Adjustment(Adjustment::Invert));
+    adjustment.blend = BlendMode::Dissolve;
+    adjustment.opacity = 0.5;
+    adjustment.mask = Some(mask(Rect::new(0, 0, 32, 48), 31, 0.0));
+    d.layers.push(adjustment);
+    check(&mut g, &d, "dissolve adjustment + mask");
+}
+
+/// Clipped pixels still use document-positioned noise, without changing the base alpha.
+#[test]
+fn dissolve_clipped_layer_matches_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = base_doc(64, 48);
+    let mut clipped = Layer::new("clipped", LayerContent::Fill(Fill::Solid(Color::BLACK)));
+    clipped.clipped = true;
+    clipped.blend = BlendMode::Dissolve;
+    clipped.opacity = 0.5;
+    d.layers.push(clipped);
+    check(&mut g, &d, "dissolve clipped");
+}
+
+/// Layer opacity gates the completed effects stack, instead of fading its pixels.
+#[test]
+fn dissolve_effects_stack_matches_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = base_doc(64, 48);
+    let mut styled = Layer::new("styled", LayerContent::Fill(Fill::Solid(Color::BLACK)));
+    styled.blend = BlendMode::Dissolve;
+    styled.opacity = 0.5;
+    styled.effects.items.push(Effect::ColorOverlay { common: FxCommon::new(BlendMode::Normal, 1.0), color: Color::BLACK });
+    d.layers.push(styled);
+    check(&mut g, &d, "dissolve effects");
+}
+
+#[test]
+fn dissolve_clipped_adjustment_matches_cpu() {
+    let Some(mut g) = gpu() else { return };
+    for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F] {
+        let mut d = Document::new("clipped adjustment", Size::new(272, 24), ColorMode::Rgb, fmt.sample);
+        let base = noise_layer("base", fmt, Rect::new(-3, -2, 268, 22), 47, 0.0);
+        let mut adjustment = Layer::new("invert", LayerContent::Adjustment(Adjustment::Invert));
+        adjustment.clipped = true;
+        adjustment.blend = BlendMode::Dissolve;
+        adjustment.opacity = 0.6;
+        adjustment.fill_opacity = 0.5;
+        adjustment.mask = Some(mask(Rect::new(0, 0, 260, 24), 48, 0.0));
+        d.layers.extend([base, adjustment]);
+        check(&mut g, &d, &format!("clipped Dissolve adjustment {fmt:?}"));
+        diff_rect(&mut g, &d, Rect::new(250, 1, 270, 20), "clipped adjustment offset region").unwrap_or_else(|e| panic!("{e}"));
     }
 }

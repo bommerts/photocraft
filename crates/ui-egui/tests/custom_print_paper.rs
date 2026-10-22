@@ -1,6 +1,9 @@
 //! #3820: edit custom paper through the real Print dialog, preview it, and print safely to PDF.
 use egui::{Event, Key, Modifiers, PointerButton, vec2};
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
 use photocraft_ui_egui::{PhotocraftApp, file_ui::open_print};
 use serde_json::{Map, Value, json};
 
@@ -22,7 +25,13 @@ fn show(ui: &mut egui::Ui, app: &mut PhotocraftApp) {
 }
 
 fn harness(app: PhotocraftApp) -> Harness<'static, PhotocraftApp> {
-    let mut h = Harness::builder().with_size(vec2(1000.0, 900.0)).with_max_steps(64).build_ui_state(show, app);
+    harness_at_scale(app, 1.0)
+}
+
+/// Builds the real dialog at an explicit physical-pixels-per-egui-point ratio so pointer
+/// events remain in egui points while exercising both standard and Retina display scales.
+fn harness_at_scale(app: PhotocraftApp, pixels_per_point: f32) -> Harness<'static, PhotocraftApp> {
+    let mut h = Harness::builder().with_size(vec2(1000.0, 900.0)).with_pixels_per_point(pixels_per_point).with_max_steps(64).build_ui_state(show, app);
     PhotocraftApp::setup_context(&h.ctx, Default::default());
     h.run_steps(4);
     h
@@ -42,8 +51,8 @@ fn shown(h: &Harness<'_, PhotocraftApp>, text: &str) -> bool {
 }
 
 fn enter_length(h: &mut Harness<'_, PhotocraftApp>, label: &str, value: &str) {
-    // Anchor the pointer to the real label; the existing length widget immediately follows it.
-    let pos = h.get_by_label(label).rect().right_center() + vec2(35.0, 0.0);
+    // Use the editor's actual accessibility bounds rather than a fixed offset from its label.
+    let pos = h.get_by_label(label).parent().unwrap().get_by_role(egui::accesskit::Role::SpinButton).rect().center();
     h.event(Event::PointerMoved(pos));
     h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
     h.run_steps(1);
@@ -58,6 +67,89 @@ fn enter_length(h: &mut Harness<'_, PhotocraftApp>, label: &str, value: &str) {
 
 fn fields(h: &Harness<'_, PhotocraftApp>, id: u64) -> Map<String, Value> {
     h.state().ui.dialogs.iter().find(|d| d.id == id).unwrap().fields.clone()
+}
+
+/// Finds the thumbnail's painted mesh bounds, rather than the earlier interaction bounds,
+/// so drag assertions detect visible lag in the same frame as a Center transition.
+fn painted_image(h: &Harness<'_, PhotocraftApp>) -> egui::Rect {
+    let active = h.state().session.active().unwrap();
+    let key = egui::Id::new(("print-thumb", active.doc.id.0, active.revision));
+    let tex = h.ctx.data(|d| d.get_temp::<std::sync::Arc<egui::TextureHandle>>(key)).unwrap();
+    h.output()
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id == tex.id() => Some(mesh.calc_bounds()),
+            _ => None,
+        })
+        .expect("the print image must be painted")
+}
+
+/// Exercises live painted movement at 1x/2x display scale, signed numeric entry and pointer
+/// capture off-page and back, then verifies Center restores the shared layout's placement.
+#[test]
+fn preview_drag_and_negative_fields_work_at_standard_and_retina_scale() {
+    for pixels_per_point in [1.0, 2.0] {
+        let (mut app, id) = app();
+        app.ui
+            .dialog_mut(id)
+            .unwrap()
+            .fields
+            .extend(json!({"paper": "a4", "center": true, "scale": 100, "scaleToFit": false, "units": "cm"}).as_object().unwrap().clone());
+        let mut h = harness_at_scale(app, pixels_per_point);
+        let start = photocraft_engine::print_cmds::layout(&h.state().session.active().unwrap().doc, &Value::Object(fields(&h, id)), "file.print").unwrap();
+        let start_image = painted_image(&h);
+        let from = start_image.center();
+        let delta = vec2(-24.0, 18.0);
+        h.event(Event::PointerMoved(from));
+        h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for step in 1..=3 {
+            h.event(Event::PointerMoved(from + delta * (step as f32 / 3.0)));
+            h.run_steps(1);
+        }
+        let during = fields(&h, id);
+        assert_eq!(during["center"], false, "Center must switch off during the drag");
+        // The hit target was registered before this frame's pointer handling. Inspect the
+        // actual painted mesh to verify the image moves immediately, without a frame of lag.
+        let moved_image = painted_image(&h);
+        assert!(
+            (moved_image.min - start_image.min - delta).length() < 0.1,
+            "the visible image must stay under the pointer when Center turns off: {start_image:?} -> {moved_image:?}, delta {delta:?}"
+        );
+        let k = (310.0 / start.paper.0).min(380.0 / start.paper.1);
+        assert!((during["left"].as_f64().unwrap() * 72.0 - start.rect.0 - f64::from(delta.x) / k).abs() < 0.001);
+        assert!((during["top"].as_f64().unwrap() * 72.0 - (start.paper.1 - start.rect.1 - start.rect.3) - f64::from(delta.y) / k).abs() < 0.001);
+        h.event(Event::PointerButton { pos: from + delta, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+        click(&mut h, "Centimeters");
+        click(&mut h, "Inches");
+        enter_length(&mut h, "Top", "-0.25");
+        enter_length(&mut h, "Left", "-0.5");
+        let negative = fields(&h, id);
+        assert_eq!(negative["top"], -0.25);
+        assert_eq!(negative["left"], -0.5);
+        let visible = h.get_by_label("Print preview image").rect();
+        assert!(visible.is_positive(), "a partly off-page image must retain a visible drag target");
+        let from = visible.center();
+        h.event(Event::PointerMoved(from));
+        h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        // Keep capture even when both the pointer and image leave the sheet entirely.
+        h.event(Event::PointerMoved(from - vec2(400.0, 0.0)));
+        h.run_steps(2);
+        assert!(fields(&h, id)["left"].as_f64().unwrap() < -1.0);
+        h.event(Event::PointerMoved(from + vec2(12.0, 12.0)));
+        h.run_steps(2);
+        assert!(fields(&h, id)["left"].as_f64().unwrap() > -0.5);
+        h.event(Event::PointerButton { pos: from + vec2(12.0, 12.0), button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        click(&mut h, "Center");
+        let centered = photocraft_engine::print_cmds::layout(&h.state().session.active().unwrap().doc, &Value::Object(fields(&h, id)), "file.print").unwrap();
+        assert_eq!(fields(&h, id)["center"], true);
+        assert!((centered.rect.0 - (centered.paper.0 - centered.rect.2) / 2.0).abs() < 1e-9);
+        assert!((centered.rect.1 - (centered.paper.1 - centered.rect.3) / 2.0).abs() < 1e-9);
+    }
 }
 
 #[test]

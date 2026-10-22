@@ -7,7 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use photocraft_engine::Session;
-use serde_json::json;
+use photocraft_engine::actions_cmds::Action;
+use serde_json::{Value, json};
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     // An unreadable folder fails the test rather than shrinking the corpus.
@@ -29,6 +30,47 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Raise the first, lower the second, never the reverse.
 const FLOOR_FILES: usize = 16;
 const CEILING_UNSUPPORTED: usize = 540;
+
+/// Save writes a compound `layer.setProps` (name, opacity, blend) as one Set per property, because
+/// Photoshop applies only the rename of a combined one (#8304); loading gives one step per
+/// property. Merge consecutive `layer.setProps` steps of one target so both sides compare as the
+/// same actions.
+fn merge_set_props(actions: &[Action]) -> Vec<Action> {
+    actions
+        .iter()
+        .map(|a| {
+            let mut out = a.clone();
+            out.steps.clear();
+            out.disabled.clear();
+            out.dialogs.clear();
+            for (i, (id, params)) in a.steps.iter().enumerate() {
+                let merged = match (out.steps.last_mut(), params.as_object()) {
+                    (Some((last_id, Value::Object(last))), Some(p))
+                        if id == "layer.setProps"
+                            && last_id == id
+                            && last.get("layer") == p.get("layer")
+                            && p.keys().all(|k| k == "layer" || !last.contains_key(k)) =>
+                    {
+                        last.extend(p.iter().map(|(k, v)| (k.clone(), v.clone())));
+                        true
+                    }
+                    _ => false,
+                };
+                if !merged {
+                    out.steps.push((id.clone(), params.clone()));
+                }
+                let at = out.steps.len() - 1;
+                if a.disabled.contains(&i) {
+                    out.disabled.insert(at);
+                }
+                if a.dialogs.contains(&i) {
+                    out.dialogs.insert(at);
+                }
+            }
+            out
+        })
+        .collect()
+}
 
 #[test]
 fn atn_corpus_loads_saves_and_reloads() {
@@ -68,7 +110,7 @@ fn atn_corpus_loads_saves_and_reloads() {
         let bytes = photocraft_engine::paint::tile::b64_decode(saved["data"].as_str().unwrap_or("")).unwrap_or_default();
         let mut t = Session::new();
         match t.execute("actions.load", json!({"data": photocraft_engine::paint::tile::b64_encode(&bytes)})) {
-            Ok(_) if t.actions.list == first => {}
+            Ok(_) if merge_set_props(&t.actions.list) == merge_set_props(&first) => {}
             Ok(_) => {
                 // Name the first step that differs, so a mapping asymmetry is quick to find.
                 let detail = first

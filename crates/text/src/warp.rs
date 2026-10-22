@@ -133,6 +133,13 @@ impl Warp {
     }
 }
 
+/// The arc length along `path`, measured as type on it measures it (from the end it starts at
+/// with `flip`), of the point on the path nearest (`x`, `y`): the `start` that puts the type's
+/// origin where the Type tool clicked on the path. `None` for a path without length.
+pub fn arc_length_at(path: &Subpath, flip: bool, x: f64, y: f64) -> Option<f64> {
+    PathFrame::new(path, 0.0, flip).and_then(|f| f.project(x, y).map(|(along, _)| along))
+}
+
 /// Most cubic segments of a type path that are followed (a hostile file cannot make this large).
 const MAX_PATH_SEGMENTS: usize = 4096;
 
@@ -340,6 +347,18 @@ mod tests {
             assert_eq!(short_style(psd), Some(short));
             assert_eq!(psd_style(short_style(psd).unwrap()), Some(psd));
         }
+    }
+
+    /// The Type tool's click on a path: the nearest point's arc length, from the other end with flip.
+    #[test]
+    fn arc_length_at_projects_onto_the_path() {
+        let line = Subpath::polyline(&[(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
+        let at = |flip, x, y| arc_length_at(&line, flip, x, y).unwrap();
+        assert!((at(false, 30.0, -8.0) - 30.0).abs() < 1e-6);
+        assert!((at(false, 110.0, 20.0) - 120.0).abs() < 1e-6, "on the second segment");
+        assert!((at(true, 30.0, -8.0) - 120.0).abs() < 1e-6, "flipped: measured from the far end");
+        assert!(at(false, -50.0, 0.0).abs() < 1e-6, "clamped to the start");
+        assert!(arc_length_at(&Subpath::polyline(&[(5.0, 5.0), (5.0, 5.0)]), false, 0.0, 0.0).is_none());
     }
 
     #[test]
