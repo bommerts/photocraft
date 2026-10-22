@@ -629,7 +629,7 @@ impl Session {
         }
         let mut st = DocState::new(doc, path);
         if self.prefs.get().interface.collapse_layer_effects_on_open {
-            st.fx_collapsed = st.doc.walk().into_iter().filter(|(_, _, l)| !l.effects.items.is_empty()).map(|(_, _, l)| l.id).collect();
+            st.fx_collapsed = st.doc.walk().into_iter().filter(|(_, _, l)| crate::fx_view_cmds::has_children(l)).map(|(_, _, l)| l.id).collect();
         }
         st.history.max_states = self.prefs.get().performance.history_states.max(1) as usize;
         st.history.max_bytes = self.prefs.get().performance.history_budget_bytes();

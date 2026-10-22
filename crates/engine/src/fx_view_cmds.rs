@@ -22,7 +22,7 @@ fn has_effects(s: &Session) -> std::result::Result<(), String> {
 }
 
 /// Whether the layer has a list to disclose: effects, or Smart Filters on a Smart Object.
-fn has_children(l: &Layer) -> bool {
+pub(crate) fn has_children(l: &Layer) -> bool {
     !l.effects.items.is_empty() || matches!(&l.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty())
 }
 
@@ -199,5 +199,38 @@ mod tests {
         restored.execute("prefs.reset", json!({"path": "interface.collapseLayerEffectsOnOpen"})).unwrap();
         restored.add_document(doc, None);
         assert!(restored.active().unwrap().fx_collapsed.is_empty());
+    }
+
+    /// Smart Filter-only layers use the same disclosure and saved admission preference.
+    #[test]
+    fn opening_smart_filter_only_layers_honors_the_collapse_preference() {
+        for depth in [8, 16, 32] {
+            let mut source = Session::new();
+            source.execute("file.new", json!({"width": 8, "height": 8, "depth": depth})).unwrap();
+            source.execute("layer.new.layer", json!({"name": "Smart"})).unwrap();
+            source.execute("edit.fill", json!({"contents": "color", "color": "#ff0000"})).unwrap();
+            source.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
+            source.execute("image.adjustments.invert", json!({})).unwrap();
+            let smart = source.active().unwrap().active_layer.unwrap();
+            let doc = (*source.active().unwrap().doc).clone();
+            let layer = doc.layer(smart).unwrap();
+            assert!(layer.effects.items.is_empty(), "the fixture has no layer styles");
+            assert!(matches!(&layer.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty()));
+            for enabled in [false, true] {
+                let mut restored = Session::new();
+                restored.execute("prefs.set", json!({"path": "interface.collapseLayerEffectsOnOpen", "value": enabled})).unwrap();
+                restored.add_document(doc.clone(), Some("smart.pcraft".into()));
+                let st = restored.active().unwrap();
+                assert_eq!(st.fx_collapsed.contains(&smart), enabled, "{depth}-bit, enabled={enabled}");
+                assert!(!st.is_dirty());
+                assert_eq!(st.history.past_len(), 0);
+                assert_eq!(st.doc.layers, doc.layers, "admission preserves filters and pixels");
+                let admitted = st.doc.clone();
+                restored.execute(ID, json!({"layer": smart.0, "expanded": true})).unwrap();
+                assert!(open(&restored, smart.0));
+                assert!(std::sync::Arc::ptr_eq(&admitted, &restored.active().unwrap().doc));
+                assert_eq!(restored.active().unwrap().history.past_len(), 0);
+            }
+        }
     }
 }
