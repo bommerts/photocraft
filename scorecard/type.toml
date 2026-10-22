@@ -44,7 +44,7 @@ id = "TYPE-218-6"
 target = "Manual pair kerning (Alt+arrows), optical kerning rendered, both round-trip PSD (#206)"
 status = "done"
 issue = 218
-note = "Alt+Left/Right at a collapsed caret kerns the pair (type_tool.rs kern_pair, 20 per step and 100 with Cmd; type_tool_alt_arrows_kern_the_pair). Optical kerning is computed from the glyph outlines in text/src/optical.rs and applied by layout.rs when the run's mode is Optical (optical_matches_photoshop, optical_kerning_tightens_open_pairs). Both modes and manual values round-trip through PSD (io/tests/psd_kerning.rs; the optical mode travels in Txt2, txt2_carries_optical_kerning)"
+note = "Alt+Left/Right at a collapsed caret kerns the pair (type_tool.rs kern_pair, 20 per step and 100 with Cmd; type_tool_alt_arrows_kern_the_pair). Optical kerning is computed from the glyph outlines in text/src/optical.rs and applied by layout.rs when the run's mode is Optical (optical_matches_photoshop, optical_kerning_tightens_open_pairs). Both modes and manual values round-trip through PSD (io/tests/it/psd_kerning.rs; the optical mode travels in Txt2, txt2_carries_optical_kerning)"
 
 [[item]]
 id = "TYPE-218-7"

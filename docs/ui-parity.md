@@ -116,7 +116,7 @@ Triangle and Curvature Pen (minus legacy Rounded Rectangle and Targeted Adjustme
 | Single-pixel rows and columns kept on release | partial | #2391 |
 | Esc deselects / ⌘Z undoes the last selection | partial | #2674, #1432 |
 | Select › Modify live preview | missing | #1752 |
-| Marching ants as Photoshop draws them: device pixels, every edge equally thick (1 px at 100 %, 2 px up to 200 %), black/white dashes 4× the thickness, slanted dash ends, same look for drag previews and committed selections | done | `ants.rs`, `tests/marching_ants_pixels.rs` (#7489) |
+| Marching ants as Photoshop draws them: device pixels, every edge equally thick (1 px at 100 %, 2 px up to 200 %), black/white dashes 4× the thickness, slanted dash ends, same look for drag previews and committed selections | done | `ants.rs`, `tests/it/marching_ants_pixels.rs` (#7489) |
 
 ## Pen, paths and shapes
 
@@ -141,16 +141,16 @@ Triangle and Curvature Pen (minus legacy Rounded Rectangle and Targeted Adjustme
 |---|---|---|
 | Drag outside rotates (⇧ 15°), angle readout; ↵ rotates and crops in one undo step | done | TOOL-214-18 |
 | Straighten button and ⌘-drag line | done | TOOL-214-21 |
-| Default-mode resize snaps handles without camera feedback; image and frame use the same camera in each rendered frame | done | `crop_mode.rs::a_live_resize_snaps_the_handle_without_feedback_from_the_camera`, `tests/crop_default_mode.rs::a_resize_renders_the_frame_and_image_with_the_same_camera` (2026-10-10) |
-| Ratio presets and W × H changes immediately fit the current frame around its centre; Swap button and X share the fitted ratio, Enter needs no resize | done | `crop_ui.rs::choosing_a_ratio_fits_and_commits_without_a_resize`, `crop_size.rs::choosing_a_size_with_the_canvas_ratio_commits_without_a_resize`, `tests/crop_default_mode.rs` (2026-10-10) |
+| Default-mode resize snaps handles without camera feedback; image and frame use the same camera in each rendered frame | done | `crop_mode.rs::a_live_resize_snaps_the_handle_without_feedback_from_the_camera`, `tests/it/crop_default_mode.rs::a_resize_renders_the_frame_and_image_with_the_same_camera` (2026-10-10) |
+| Ratio presets and W × H changes immediately fit the current frame around its centre; Swap button and X share the fitted ratio, Enter needs no resize | done | `crop_ui.rs::choosing_a_ratio_fits_and_commits_without_a_resize`, `crop_size.rs::choosing_a_size_with_the_canvas_ratio_commits_without_a_resize`, `tests/it/crop_default_mode.rs` (2026-10-10) |
 | Roomy Crop options bar does not scroll; narrow tool bars retain horizontal scrolling | done | `panels.rs::a_wide_crop_options_bar_does_not_scroll`, `panels.rs::narrow_tool_options_can_scroll_to_the_last_control` (2026-10-10) |
 | Overlays (thirds, grid, diagonal, triangle, golden ratio/spiral), O / ⇧O | done | TOOL-214-20 |
 | Crop shield, Show Cropped Area (H) | done | TOOL-214-22 |
 | Default mode: the image turns and moves behind an upright box; Auto Center Preview; Use Classic Mode | done | TOOL-214-23 |
 | W × H × Resolution with units, built-in size presets, Front Image | done | TOOL-214-9 (`crop_size.rs`) |
 | Saved custom crop presets (New / Delete Crop Preset, kept with the preferences; moving them to another computer is not offered) | done | TOOL-214-9 (`crop_presets.rs`, `tool.presets.*` with tool `crop`, #2723) |
-| Fill: Content-Aware Fill: a turned or extending crop fills the uncovered corners and strips from the image (each piece with its own sampling window), on the Background or else the active pixel layer, in the crop's one undo step; Generative Expand not offered | done | `tests/crop_content_aware.rs`, `crop_ui.rs::commit_passes_the_fill_choice` (#3823, 2026-10-12) |
-| Delete Cropped Pixels off: the crop only hides the pixels outside the frame; editing the frame again shows them past the canvas and a recrop handle snaps to their edge | done | `image.crop` `deleteCroppedPixels`, the options-bar checkbox (`panels.rs`), `tests/crop_beyond_canvas.rs::editing_a_crop_frame_shows_the_pixels_past_the_canvas`, `crop_mode.rs::a_recrop_handle_snaps_exactly_to_the_hidden_pixels_edge` (#3638, #3640) |
+| Fill: Content-Aware Fill: a turned or extending crop fills the uncovered corners and strips from the image (each piece with its own sampling window), on the Background or else the active pixel layer, in the crop's one undo step; Generative Expand not offered | done | `tests/it/crop_content_aware.rs`, `crop_ui.rs::commit_passes_the_fill_choice` (#3823, 2026-10-12) |
+| Delete Cropped Pixels off: the crop only hides the pixels outside the frame; editing the frame again shows them past the canvas and a recrop handle snaps to their edge | done | `image.crop` `deleteCroppedPixels`, the options-bar checkbox (`panels.rs`), `tests/it/crop_beyond_canvas.rs::editing_a_crop_frame_shows_the_pixels_past_the_canvas`, `crop_mode.rs::a_recrop_handle_snaps_exactly_to_the_hidden_pixels_edge` (#3638, #3640) |
 
 ## Snapping, guides, rulers, precision
 

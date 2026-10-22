@@ -28,6 +28,7 @@ pub struct LiveMixer {
     base: (photocraft_doc::DocId, u64),
     selection: Option<Surface>,
     lock: bool,
+    color_channel: Option<usize>,
     done: usize,
     bounds: Rect,
     tail: Rect,
@@ -68,6 +69,7 @@ impl LiveMixer {
             base: (active.doc.id, active.revision),
             selection,
             lock,
+            color_channel: crate::channel_cmds::color_restriction(s, "paint.mixerBrush", p),
             done: 0,
             bounds: Rect::EMPTY,
             tail: Rect::EMPTY,
@@ -162,7 +164,22 @@ impl LiveMixer {
         if let Some(work) = tail_work {
             mix_back(surface, &Region::read(&self.pre, tail), &work, tail, 1.0, self.selection.as_ref(), self.lock);
         }
-        Ok(changed.union(&tail))
+        let changed = changed.union(&tail);
+        if let Some(channel) = self.color_channel.filter(|_| !changed.is_empty()) {
+            Self::check_region(changed)?;
+            let n = surface.channels().max(1);
+            let before = self.pre.read_region(changed);
+            let mut shown = surface.read_region(changed);
+            for (new, old) in shown.chunks_exact_mut(n).zip(before.chunks_exact(n)) {
+                for (k, (new, old)) in new.iter_mut().zip(old).enumerate() {
+                    if k != channel {
+                        *new = *old;
+                    }
+                }
+            }
+            surface.write_region(changed, &shown);
+        }
+        Ok(changed)
     }
 
     fn check_region(rect: Rect) -> Result<()> {
@@ -187,7 +204,12 @@ impl LiveMixer {
         let mut p = self.params.clone();
         p["seed"] = json!(self.seed);
         let (stroke, settings, initial, layer) = mixer_setup(s, &p)?;
-        if stroke.brush != self.brush || settings != self.settings || initial != self.initial || layer != self.layer {
+        if stroke.brush != self.brush
+            || settings != self.settings
+            || initial != self.initial
+            || layer != self.layer
+            || crate::channel_cmds::color_restriction(s, "paint.mixerBrush", &p) != self.color_channel
+        {
             return Err(bad("paint.mixerBrush", "Mixer Brush settings changed during the stroke"));
         }
         self.renderer.finish();
