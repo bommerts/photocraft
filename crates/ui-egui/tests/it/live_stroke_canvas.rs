@@ -18,6 +18,7 @@ type Pixels = Vec<[u8; 4]>;
 #[test]
 fn raw_pointer_brush_and_mixer_pixels_appear_in_the_input_frame() {
     use photocraft_ui_egui::state::Tool;
+    let _gpu = photocraft_testkit::gpu_lock();
     for flip in [false, true] {
         for tool in [Tool::Brush, Tool::MixerBrush] {
             let Some(mut h) = harness() else { return };
