@@ -66,6 +66,8 @@ the same.
 
 Palette BMP and PNG pixels decode as RGB(A) in `Image`; `bmp_palette` and `png_palette` expose the
 embedded table (and a PNG's transparent entry) so `photocraft-io` can open them in Indexed Color mode.
+`bmp_palette` returns the colours the header declares, not the decoder's 256-entry padding.
+`encode_bmp_indexed` writes the inverse: indices plus a table as an 8-bit palette BMP.
 
 ## Documented asymmetries and limitations
 

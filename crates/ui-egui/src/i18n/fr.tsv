@@ -2656,6 +2656,7 @@
 	32 bit (float)	32 bits (flottant)
 	Floating point	Virgule flottante
 	Use Global Light	Utiliser la lumière globale
+	Overprint	Surimpression
 	Native file drag-and-drop is unavailable	Le glisser-déposer natif de fichiers n'est pas disponible
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	Le glisser-déposer natif de fichiers n'est pas encore pris en charge sous Wayland. Utilisez Fichier › Ouvrir, ou copiez l'image dans votre gestionnaire de fichiers et collez-la avec {paste}.
 	To drop files, start PhotoCraft under XWayland: `{command}`	Pour déposer des fichiers, lancez PhotoCraft sous XWayland : `{command}`
@@ -3074,6 +3075,33 @@ cameraData	Lens	Objectif
 	Output To	Sortie vers
 	Duplicate Layer	Dupliquer le calque
 	Contract	Contracter
+
+	Animation Options	Options d’animation
+	Entire Document	Document entier
+	Filter Options	Options de filtrage
+	Layer Bounds	Limites du calque
+	Layers Panel Options	Options du panneau Calques
+	Lock Layers	Verrouiller les calques
+	New Artboard…	Nouveau plan de travail…
+	New Group…	Nouveau groupe…
+	Prevent Auto-Nesting	Empêcher l’imbrication automatique
+	Show Layers	Afficher les calques
+	Thumbnail Contents	Contenu des vignettes
+	Thumbnail Size	Taille des vignettes
+	Use Default Masks on Fill Layers	Utiliser les masques par défaut sur les calques de remplissage
+	Expand New Effects	Développer les nouveaux effets
+	Add “copy” to Copied Layers and Groups	Ajouter « copie » aux calques et groupes dupliqués
+	Preview on canvas when reordering layers	Prévisualiser sur la zone de travail lors du réagencement des calques
+	Show layer mask badges	Afficher les badges des masques de fusion
+
+# Smart Filter editors
+	Blending Options ({filter})	Options de fusion ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Masquer les effets du calque et les filtres dynamiques  ({key}-clic : tous les calques)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Afficher les effets du calque et les filtres dynamiques  ({key}-clic : tous les calques)
+	Wait for the current job to finish.	Attendez la fin de la tâche en cours.
+	The document or Smart Filter changed. Reopen its dialog.	Le document ou le filtre dynamique a changé. Rouvrez sa boîte de dialogue.
+	Opacity must be between 0% and 100%.	L'opacité doit être comprise entre 0% et 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Le mode Fondu est approximé : il fusionne sans le tramage de Photoshop.
 	Loading fonts…	Chargement des polices…
 	Response curve	Courbe de réponse
 	Tool	Outil
@@ -3284,6 +3312,10 @@ curves	Smooth	Lisser
 	DDS Options	Options DDS
 	Compression	Compression
 	Generate Mipmaps	Générer les mipmaps
+
+# Color Table (.act) dialog
+	There is no color table to save.	Il n’y a aucune table de couleurs à enregistrer.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} couleur enregistrée dans {file}|{n} couleurs enregistrées dans {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptateur GPU

@@ -197,6 +197,113 @@ fn palette_and_duotone_modes_are_written_in_their_own_mode() {
 }
 
 #[test]
+fn a_duotone_made_in_photocraft_is_written_with_its_inks() {
+    use photocraft_doc::{Duotone, DuotoneInk};
+    let mut d = photocraft_doc::Document::with_background(
+        "d",
+        photocraft_doc::Size::new(4, 2),
+        photocraft_color::ColorMode::Grayscale,
+        photocraft_color::SampleType::U8,
+        photocraft_color::Color::rgba(0.5, 0.5, 0.5, 1.0),
+    );
+    d.mode = photocraft_color::ColorMode::Duotone;
+    d.duotone = Some(Duotone { inks: vec![DuotoneInk::new("Black", [0.0; 3]), DuotoneInk::new("Orange", [1.0, 0.5, 0.0])], psd_raw: None });
+    let out = export(&d, "x.psd", &ExportOptions::default()).unwrap();
+    assert!(out.warnings.iter().all(|w| !w.contains("written as")), "{:?}", out.warnings);
+    let f = PsdFile::from_bytes(&out.bytes).unwrap();
+    assert_eq!((f.header.color_mode, f.color_mode_data.len()), (ColorMode::Duotone, 524));
+    let (back, w) = psd_to_document(&f);
+    assert!(w.iter().all(|w| !w.contains("duotone")), "{w:?}");
+    let inks = &back.duotone.as_ref().unwrap().inks;
+    assert_eq!(inks.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["Black", "Orange"]);
+    assert!((inks[1].color[1] - 0.5).abs() < 1e-4, "{:?}", inks[1].color);
+    // Re-exported unedited, the block is the one read.
+    let again = PsdFile::from_bytes(&export(&back, "x.psd", &ExportOptions::default()).unwrap().bytes).unwrap();
+    assert_eq!(again.color_mode_data, f.color_mode_data);
+}
+
+fn duotone_doc(sample: photocraft_color::SampleType) -> photocraft_doc::Document {
+    use photocraft_doc::{Duotone, DuotoneInk};
+    let mut d = photocraft_doc::Document::with_background(
+        "d",
+        photocraft_doc::Size::new(4, 2),
+        photocraft_color::ColorMode::Grayscale,
+        sample,
+        photocraft_color::Color::rgba(0.5, 0.5, 0.5, 1.0),
+    );
+    d.mode = photocraft_color::ColorMode::Duotone;
+    d.duotone = Some(Duotone { inks: vec![DuotoneInk::new("Black", [0.0; 3]), DuotoneInk::new("Orange", [1.0, 0.5, 0.0])], psd_raw: None });
+    d
+}
+
+#[test]
+fn a_16_bit_duotone_is_written_as_grayscale() {
+    // Photoshop has only 8-bit Duotone and refuses to open a 16-bit Duotone PSD.
+    let out = export(&duotone_doc(photocraft_color::SampleType::U16), "x.psd", &ExportOptions::default()).unwrap();
+    let f = PsdFile::from_bytes(&out.bytes).unwrap();
+    assert_eq!((f.header.color_mode, f.header.depth), (ColorMode::Grayscale, 16));
+    assert!(out.warnings.iter().any(|w| w == "Duotone document written as Grayscale"), "{:?}", out.warnings);
+}
+
+#[test]
+fn a_layered_duotone_keeps_its_image_without_maximize_compatibility() {
+    // A Duotone opens flattened from its merged image (its layer records are not read), so that
+    // image is written in full even when Maximize Compatibility is off, never the placeholder.
+    let mut d = duotone_doc(photocraft_color::SampleType::U8);
+    let mut top = photocraft_doc::Layer::new("Dark", LayerContent::Raster(photocraft_raster::Surface::new(d.pixel_format())));
+    if let LayerContent::Raster(s) = &mut top.content {
+        s.fill_rect(photocraft_geom::Rect::new(0, 0, 2, 2), &photocraft_raster::from_rgba(&d.pixel_format(), [0.0, 0.0, 0.0, 1.0]));
+    }
+    d.layers.push(top);
+    let opts = ExportOptions { psd_maximize_compatibility: false, ..Default::default() };
+    let f = PsdFile::from_bytes(&export(&d, "x.psd", &opts).unwrap().bytes).unwrap();
+    assert_eq!(f.header.color_mode, ColorMode::Duotone);
+    assert!(!f.layers().is_empty(), "the layers are still written");
+    // The grey plate: the left half black (the top layer), the right half the 50% grey background.
+    let plate: Vec<u8> = f.decode_merged().unwrap();
+    assert_eq!(plate.len(), 8);
+    assert!(plate[..2].iter().chain(&plate[4..6]).all(|&v| v == 0), "{plate:?}");
+    assert!(plate[2..4].iter().chain(&plate[6..]).all(|&v| (127..=128).contains(&v)), "{plate:?}");
+    let (back, _) = psd_to_document(&f);
+    let maxed = PsdFile::from_bytes(&export(&d, "x.psd", &ExportOptions::default()).unwrap().bytes).unwrap();
+    assert_eq!(f.decode_merged().unwrap(), maxed.decode_merged().unwrap());
+    assert_eq!(back.duotone.as_ref().map(|x| x.inks.len()), Some(2));
+}
+
+#[test]
+fn a_colour_book_ink_shows_its_lab_equivalent_or_the_grey_plate() {
+    let out = export(&duotone_doc(photocraft_color::SampleType::U8), "x.psd", &ExportOptions::default()).unwrap();
+    let mut f = PsdFile::from_bytes(&out.bytes).unwrap();
+    // The second ink becomes PANTONE 327 CVC, stored by its book key as Photoshop does.
+    f.color_mode_data[14..24].copy_from_slice(&[0, 3, 0x20, 0x20, 0x33, 0x32, 0x37, 0x43, 0, 0]);
+    // Without resource 1066 its colour is unknown: the grey plate, not a black ink.
+    let (d, w) = psd_to_document(&f);
+    let inks = &d.duotone.as_ref().unwrap().inks;
+    assert_eq!((inks.len(), inks[0].color), (1, [0.0; 3]), "{inks:?}");
+    assert!(w.iter().any(|w| w.contains("shown as grayscale")), "{w:?}");
+    // With Photoshop's Lab equivalents (black, then the PANTONE teal) it shows in colour.
+    let lab = vec![0, 1, 0, 2, 0, 7, 0x03, 0xB9, 0x01, 0xF2, 0x01, 0xA9, 0, 0, 0, 7, 0x11, 0xC5, 0xE6, 0x38, 0xFE, 0x0C, 0, 0];
+    f.resources.push(photocraft_psd::ImageResource::new(1066, lab));
+    let (d, w) = psd_to_document(&f);
+    assert!(w.iter().all(|w| !w.contains("duotone")), "{w:?}");
+    let duo = d.duotone.as_ref().unwrap();
+    assert_eq!(duo.inks.len(), 2);
+    let [r, g, b] = duo.inks[1].color;
+    assert!(r < 0.1 && g > 0.4 && b > 0.35, "{:?}", duo.inks[1].color);
+    assert_eq!(duo.psd_raw.as_ref(), Some(&f.color_mode_data), "the block is kept raw");
+}
+
+#[test]
+fn a_layered_duotone_tiff_says_its_inks_are_dropped() {
+    // TIFF has no Duotone: a layered one is written in its grey plate, and says so.
+    let mut d = duotone_doc(photocraft_color::SampleType::U8);
+    let adj = d.duotone.as_ref().unwrap().display_adjustment();
+    d.layers.push(photocraft_doc::Layer::new("Map", LayerContent::Adjustment(adj)));
+    let out = export(&d, "x.tif", &ExportOptions { tiff_layers: true, ..Default::default() }).unwrap();
+    assert!(out.warnings.iter().any(|w| w == "Duotone document written as Grayscale"), "{:?}", out.warnings);
+}
+
+#[test]
 fn indexed_psd_keeps_the_table_length_and_transparent_entry() {
     use photocraft_doc::ColorTable;
     let mut d = photocraft_doc::Document::with_background(
@@ -285,6 +392,33 @@ fn indexed_document_whose_only_entry_is_transparent_is_not_written_as_indexed() 
     let f = PsdFile::from_bytes(&out.bytes).unwrap();
     assert_eq!(f.header.color_mode, ColorMode::Rgb, "{:?}", out.warnings);
     assert_eq!(&f.composite_rgba8().unwrap().data[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn indexed_save_warns_whenever_flattening_loses_a_layer() {
+    // One plain visible pixel layer is the merged image: no warning. A single hidden, masked,
+    // half-opaque or type layer, or a second layer, is lost in the flat file, so the save says so.
+    let flat = |d: &photocraft_doc::Document| {
+        let out = export(d, "x.psd", &ExportOptions::default()).unwrap();
+        assert_eq!(PsdFile::from_bytes(&out.bytes).unwrap().header.color_mode, ColorMode::Indexed);
+        out.warnings.iter().any(|w| w.contains("written flattened"))
+    };
+    let plain = indexed_doc(photocraft_color::Color::rgba(1.0, 1.0, 1.0, 1.0), vec![[255, 255, 255], [0, 0, 0]], None);
+    assert!(!flat(&plain), "a single plain layer flattens losslessly");
+    let changes: [fn(&mut photocraft_doc::Layer); 4] = [
+        |l| l.visible = false,
+        |l| l.opacity = 0.5,
+        |l| l.mask = Some(photocraft_doc::LayerMask::hide_all()),
+        |l| l.content = LayerContent::Text(photocraft_doc::TextLayer::default()),
+    ];
+    for (i, change) in changes.iter().enumerate() {
+        let mut d = plain.clone();
+        change(&mut d.layers[0]);
+        assert!(flat(&d), "change {i} is lost when flattened, so the save warns");
+    }
+    let mut two = plain.clone();
+    two.layers.push(two.layers[0].clone());
+    assert!(flat(&two));
 }
 
 #[test]
@@ -560,9 +694,11 @@ fn text_and_smart_detected() {
     use photocraft_psd::{LayerRecord, TaggedBlock};
     let mut f = testgen::small(Version::Psd, Compression::Raw);
     for (name, key) in [("t", b"TySh"), ("s", b"PlLd"), ("sh", b"vscg")] {
+        // Type identification needs readable type data, not an eight-byte malformed stub.
+        let data = if key == b"TySh" { photocraft_text::psd::build_tysh(&photocraft_doc::TextLayer::default(), 72.0, None) } else { vec![0; 8] };
         f.layers_mut().push(LayerRecord {
             name: name.as_bytes().to_vec(),
-            blocks: vec![TaggedBlock::unicode_name(name), TaggedBlock::new(*key, vec![0; 8])],
+            blocks: vec![TaggedBlock::unicode_name(name), TaggedBlock::new(*key, data)],
             ..Default::default()
         });
     }

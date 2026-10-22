@@ -319,6 +319,7 @@
 	Blending Options…	Overvloeiopties…
 	Bevel & Emboss…	Schuine kant en reliëf…
 	Use Global Light	Globaal licht gebruiken
+	Overprint	Overdrukken
 	Inner Shadow…	Binnenschaduw…
 	Inner Glow…	Gloed binnen…
 	Satin…	Satijn…
@@ -3811,6 +3812,32 @@ cameraData	Lens	Lens
 	Mirror	Spiegelen
 	Output Settings	Uitvoerinstellingen
 	Output To	Uitvoer naar
+
+	Animation Options	Animatieopties
+	Entire Document	Hele document
+	Filter Options	Filteropties
+	Layer Bounds	Laaggrenzen
+	Layers Panel Options	Opties van het deelvenster Lagen
+	New Artboard…	Nieuw tekengebied…
+	New Group…	Nieuwe groep…
+	Prevent Auto-Nesting	Automatisch nesten voorkomen
+	Show Layers	Lagen tonen
+	Thumbnail Contents	Inhoud van miniaturen
+	Thumbnail Size	Grootte van miniaturen
+	Use Default Masks on Fill Layers	Standaardmaskers gebruiken op opvullagen
+	Expand New Effects	Nieuwe effecten uitvouwen
+	Add “copy” to Copied Layers and Groups	„kopie” toevoegen aan gekopieerde lagen en groepen
+	Preview on canvas when reordering layers	Voorvertoning op canvas bij herschikken van lagen
+	Show layer mask badges	Badges voor laagmaskers tonen
+
+# Smart Filter editors
+	Blending Options ({filter})	Overvloeiopties ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Laageffecten en slimme filters verbergen  ({key}-klik: alle lagen)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Laageffecten en slimme filters tonen  ({key}-klik: alle lagen)
+	Wait for the current job to finish.	Wacht tot de huidige taak is voltooid.
+	The document or Smart Filter changed. Reopen its dialog.	Het document of het slimme filter is gewijzigd. Open het dialoogvenster opnieuw.
+	Opacity must be between 0% and 100%.	De dekking moet tussen 0% en 100% liggen.
+	Dissolve is approximated: it blends without Photoshop's dither.	Verspreiden is benaderd: het mengt zonder de dither van Photoshop.
 	Loading fonts…	Lettertypen laden…
 	Response curve	Responscurve
 	Simulate Pressure	Druk simuleren
@@ -4034,6 +4061,10 @@ curves	Smooth	Vloeiend maken
 # DDS Options (#1327)
 	DDS Options	DDS-opties
 	Generate Mipmaps	Mipmaps genereren
+
+# Color Table (.act) dialog
+	There is no color table to save.	Er is geen kleurtabel om op te slaan.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} kleur opgeslagen in {file}|{n} kleuren opgeslagen in {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU-adapter

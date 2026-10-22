@@ -1819,6 +1819,7 @@
 	Blending Options…	Επιλογές ανάμειξης…
 	Bevel & Emboss…	Λοξότμηση και ανάγλυφο…
 	Use Global Light	Χρήση καθολικού φωτισμού
+	Overprint	Υπερεκτύπωση
 	Inner Shadow…	Εσωτερική σκιά…
 	Inner Glow…	Εσωτερική λάμψη…
 	Satin…	Σατινέ…
@@ -3752,6 +3753,32 @@ cameraData	Lens	Φακός
 	Mirror	Κατοπτρισμός
 	Output Settings	Ρυθμίσεις εξόδου
 	Output To	Έξοδος σε
+
+	Animation Options	Επιλογές κίνησης
+	Entire Document	Ολόκληρο έγγραφο
+	Filter Options	Επιλογές φίλτρου
+	Layer Bounds	Όρια επιπέδου
+	Layers Panel Options	Επιλογές πίνακα επιπέδων
+	New Artboard…	Νέος πίνακας σχεδίασης…
+	New Group…	Νέα ομάδα…
+	Prevent Auto-Nesting	Αποτροπή αυτόματης ένθεσης
+	Show Layers	Εμφάνιση επιπέδων
+	Thumbnail Contents	Περιεχόμενο μικρογραφιών
+	Thumbnail Size	Μέγεθος μικρογραφιών
+	Use Default Masks on Fill Layers	Χρήση προεπιλεγμένων μασκών σε επίπεδα γεμίσματος
+	Expand New Effects	Ανάπτυξη νέων εφέ
+	Add “copy” to Copied Layers and Groups	Προσθήκη «αντίγραφο» σε αντιγραμμένα επίπεδα και ομάδες
+	Preview on canvas when reordering layers	Προεπισκόπηση στον καμβά κατά την αναδιάταξη επιπέδων
+	Show layer mask badges	Εμφάνιση σημάτων μασκών επιπέδου
+
+# Smart Filter editors
+	Blending Options ({filter})	Επιλογές ανάμειξης ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Απόκρυψη εφέ επιπέδου και έξυπνων φίλτρων  ({key}-κλικ: όλα τα επίπεδα)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Εμφάνιση εφέ επιπέδου και έξυπνων φίλτρων  ({key}-κλικ: όλα τα επίπεδα)
+	Wait for the current job to finish.	Περιμένετε να ολοκληρωθεί η τρέχουσα εργασία.
+	The document or Smart Filter changed. Reopen its dialog.	Το έγγραφο ή το έξυπνο φίλτρο άλλαξε. Ανοίξτε ξανά το παράθυρό του.
+	Opacity must be between 0% and 100%.	Η αδιαφάνεια πρέπει να είναι μεταξύ 0% και 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Η Διάλυση προσεγγίζεται: η ανάμειξη γίνεται χωρίς το dither του Photoshop.
 	Loading fonts…	Φόρτωση γραμματοσειρών…
 	Response curve	Καμπύλη απόκρισης
 	Simulate Pressure	Προσομοίωση πίεσης
@@ -3974,6 +4001,10 @@ curves	Smooth	Εξομάλυνση
 # DDS Options (#1327)
 	DDS Options	Επιλογές DDS
 	Generate Mipmaps	Δημιουργία mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Δεν υπάρχει πίνακας χρωμάτων για αποθήκευση.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Αποθηκεύτηκε {n} χρώμα στο {file}|Αποθηκεύτηκαν {n} χρώματα στο {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Προσαρμογέας GPU

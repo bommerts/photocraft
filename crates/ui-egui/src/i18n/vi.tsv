@@ -1909,6 +1909,7 @@ document	Orientation	Hướng trang
 	Preview	Xem trước
 	Blend Mode	Chế độ hòa trộn
 	Use Global Light	Dùng ánh sáng chung
+	Overprint	In chồng
 	Distance	Khoảng cách
 	Spread	Lan rộng
 	Choke	Thu hẹp
@@ -3722,6 +3723,33 @@ curves	Smooth	Làm mượt
 	Lines/Inch	Đường/inch
 	Lines/Centimeter	Đường/centimet
 	Ellipse	Elip
+
+# Layers panel options and Smart Filter editors
+	Add “copy” to Copied Layers and Groups	Thêm “bản sao” vào lớp và nhóm được sao chép
+	Animation Options	Tùy chọn hoạt ảnh
+	Entire Document	Toàn bộ tài liệu
+	Expand New Effects	Mở rộng hiệu ứng mới
+	Filter Options	Tùy chọn bộ lọc
+	Layer Bounds	Đường biên lớp
+	Layers Panel Options	Tùy chọn bảng Lớp
+	New Artboard…	Bảng vẽ mới…
+	New Group…	Nhóm mới…
+	Panel Options…	Tùy chọn bảng…
+	Prevent Auto-Nesting	Chặn tự lồng
+	Preview on canvas when reordering layers	Xem trước trên Canvas khi sắp xếp lại lớp
+	Show Layers	Hiện các lớp
+	Show layer mask badges	Hiện huy hiệu mặt nạ lớp
+	Thumbnail Contents	Nội dung hình thu nhỏ
+	Thumbnail Size	Kích thước hình thu nhỏ
+	Use Default Masks on Fill Layers	Dùng mặt nạ mặc định cho lớp tô
+
+	Blending Options ({filter})	Tùy chọn hòa trộn ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Ẩn hiệu ứng và bộ lọc thông minh của lớp  ({key}-bấm: tất cả các lớp)
+	Opacity must be between 0% and 100%.	Độ mờ phải nằm trong khoảng từ 0% đến 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Hoà tan chỉ được mô phỏng gần đúng: hòa trộn không có dither của Photoshop.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Hiện hiệu ứng và bộ lọc thông minh của lớp  ({key}-bấm: tất cả các lớp)
+	The document or Smart Filter changed. Reopen its dialog.	Tài liệu hoặc bộ lọc thông minh đã thay đổi. Hãy mở lại hộp thoại của nó.
+	Wait for the current job to finish.	Hãy chờ tác vụ hiện tại hoàn tất.
 	Accept and Go to Conflict	Chấp nhận và đến xung đột
 	Changes undone.	Đã hoàn tác thay đổi.
 	Choose a new shortcut for this command, or leave it without one.	Chọn phím tắt mới cho lệnh này, hoặc để lệnh không có phím tắt.
@@ -3763,6 +3791,10 @@ curves	Smooth	Làm mượt
 	DDS Options	Tùy chọn DDS
 	Compression	Nén
 	Generate Mipmaps	Tạo mipmap
+
+# Color Table (.act) dialog
+	There is no color table to save.	Không có bảng màu nào để lưu.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Đã lưu {n} màu vào {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Bộ điều hợp GPU

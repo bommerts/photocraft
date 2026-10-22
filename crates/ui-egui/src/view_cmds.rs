@@ -710,6 +710,8 @@ fn run(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, p: &Value) -> Res
             k
         };
         o.screen_mode = next.to_string();
+        // Tab's view of the chrome (#6760) lasts only while in Full Screen Mode.
+        app.ui.panels.full_screen_chrome = false;
         // Both full-screen modes take the whole display; the menu bar stays in the first.
         let (full_screen, maximized) = ctx.input(|i| (i.viewport().fullscreen.unwrap_or(false), i.viewport().maximized.unwrap_or(false)));
         let was_maximized = ctx.data(|d| d.get_temp::<bool>(was_maximized_id())).unwrap_or(false);

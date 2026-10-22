@@ -310,6 +310,7 @@
 	Blending Options…	Karışım Seçenekleri…
 	Bevel & Emboss…	Eğim ve Kabartma…
 	Use Global Light	Global Light'ı kullanın
+	Overprint	Üst Baskı
 	Inner Shadow…	İç Gölge…
 	Inner Glow…	İç Işıma…
 	Satin…	Saten…
@@ -3962,6 +3963,32 @@ cameraData	Lens	Lens
 	Lines/Inch	Çizgi/İnç
 	Lines/Centimeter	Çizgi/Santimetre
 	Ellipse	Elips
+
+# Layers panel options and Smart Filter editors
+	Add “copy” to Copied Layers and Groups	Kopyalanan Katman ve Gruplara “kopya” Ekle
+	Animation Options	Animasyon Seçenekleri
+	Entire Document	Tüm Belge
+	Expand New Effects	Yeni Efektleri Genişlet
+	Filter Options	Filtre Seçenekleri
+	Layer Bounds	Katman Sınırları
+	Layers Panel Options	Katmanlar Paneli Seçenekleri
+	New Artboard…	Yeni Çalışma Yüzeyi…
+	New Group…	Yeni Grup…
+	Prevent Auto-Nesting	Otomatik Yerleştirmeyi Önle
+	Preview on canvas when reordering layers	Katmanları yeniden sıralarken kanvasta önizle
+	Show Layers	Katmanları Göster
+	Show layer mask badges	Katman maskesi rozetlerini göster
+	Thumbnail Contents	Küçük Resim İçeriği
+	Thumbnail Size	Küçük Resim Boyutu
+	Use Default Masks on Fill Layers	Dolgu Katmanlarında Varsayılan Maskeleri Kullan
+
+	Blending Options ({filter})	Karışım Seçenekleri ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Katmanın efektlerini ve Akıllı Filtrelerini gizle  ({key}-tık: tüm katmanlar)
+	Opacity must be between 0% and 100%.	Opaklık %0 ile %100 arasında olmalıdır.
+	Dissolve is approximated: it blends without Photoshop's dither.	Eritme yaklaşık olarak uygulanır: Photoshop'un dither'ı olmadan karıştırır.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Katmanın efektlerini ve Akıllı Filtrelerini göster  ({key}-tık: tüm katmanlar)
+	The document or Smart Filter changed. Reopen its dialog.	Belge veya Akıllı Filtre değişti. İletişim kutusunu yeniden açın.
+	Wait for the current job to finish.	Geçerli işin bitmesini bekleyin.
 	Accept and Go to Conflict	Kabul Et ve Çakışmaya Git
 	Changes undone.	Değişiklikler geri alındı.
 	Choose a new shortcut for this command, or leave it without one.	Bu komut için yeni bir kısayol seçin veya kısayolsuz bırakın.
@@ -4001,6 +4028,10 @@ cameraData	Lens	Lens
 # DDS Options (#1327)
 	DDS Options	DDS Seçenekleri
 	Generate Mipmaps	Mipmap oluştur
+
+# Color Table (.act) dialog
+	There is no color table to save.	Kaydedilecek renk tablosu yok.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} renk {file} konumuna kaydedildi
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU bağdaştırıcısı

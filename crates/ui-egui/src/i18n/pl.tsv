@@ -326,6 +326,7 @@
 	Blending Options…	Opcje mieszania…
 	Bevel & Emboss…	Ukos i płaskorzeźba…
 	Use Global Light	Użyj światła globalnego
+	Overprint	Nadrukowywanie
 	Inner Shadow…	Cień wewnętrzny…
 	Inner Glow…	Poświata wewnętrzna…
 	Satin…	Satyna…
@@ -3669,6 +3670,32 @@ cameraData	Lens	Obiektyw
 	Mirror	Odbicie lustrzane
 	Output Settings	Ustawienia wyjścia
 	Output To	Wyjście do
+
+	Animation Options	Opcje animacji
+	Entire Document	Cały dokument
+	Filter Options	Opcje filtrowania
+	Layer Bounds	Granice warstwy
+	Layers Panel Options	Opcje panelu Warstwy
+	New Artboard…	Nowy obszar roboczy…
+	New Group…	Nowa grupa…
+	Prevent Auto-Nesting	Zapobiegaj automatycznemu zagnieżdżaniu
+	Show Layers	Pokaż warstwy
+	Thumbnail Contents	Zawartość miniaturek
+	Thumbnail Size	Rozmiar miniaturek
+	Use Default Masks on Fill Layers	Użyj domyślnych masek na warstwach wypełnienia
+	Expand New Effects	Rozwijaj nowe efekty
+	Add “copy” to Copied Layers and Groups	Dodawaj „kopia” do skopiowanych warstw i grup
+	Preview on canvas when reordering layers	Podgląd na obszarze roboczym podczas zmiany kolejności warstw
+	Show layer mask badges	Pokaż odznaki masek warstw
+
+# Smart Filter editors
+	Blending Options ({filter})	Opcje mieszania ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Ukryj efekty warstwy i inteligentne filtry  (kliknięcie z {key}: wszystkie warstwy)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Pokaż efekty warstwy i inteligentne filtry  (kliknięcie z {key}: wszystkie warstwy)
+	Wait for the current job to finish.	Poczekaj na zakończenie bieżącego zadania.
+	The document or Smart Filter changed. Reopen its dialog.	Dokument lub inteligentny filtr został zmieniony. Otwórz ponownie jego okno dialogowe.
+	Opacity must be between 0% and 100%.	Krycie musi wynosić od 0% do 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Rozpuszczanie jest przybliżone: miesza się bez ditheringu Photoshopa.
 	Loading fonts…	Wczytywanie czcionek…
 	Response curve	Krzywa odpowiedzi
 	Simulate Pressure	Symuluj nacisk
@@ -3874,6 +3901,10 @@ curves	Smooth	Wygładź
 	DDS Options	Opcje DDS
 	Compression	Kompresja
 	Generate Mipmaps	Generuj mipmapy
+
+# Color Table (.act) dialog
+	There is no color table to save.	Brak tabeli kolorów do zapisania.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Zapisano {n} kolor do {file}|Zapisano {n} kolory do {file}|Zapisano {n} kolorów do {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Karta GPU

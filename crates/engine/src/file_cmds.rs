@@ -105,7 +105,7 @@ pub fn list_images(dir: &str) -> Result<Vec<String>> {
     let mut out: Vec<String> = rd
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()).is_some_and(|x| OPENABLE.contains(&x.to_ascii_lowercase().as_str())))
+        .filter(|p| p.is_file() && openable_name(&p.to_string_lossy()))
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
     out.sort();
@@ -116,12 +116,20 @@ pub fn list_images(dir: &str) -> Result<Vec<String>> {
     Err(EngineError::Other(format!("cannot list {dir}: no file system on the web")))
 }
 
+/// Whether a folder entry is one the batch commands open: an `OPENABLE` extension, or GIMP's
+/// gzipped `.xcf.gz`, whose last extension alone says nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn openable_name(path: &str) -> bool {
+    let lower = file_name(path).to_ascii_lowercase();
+    lower.ends_with(".xcf.gz") || lower.rsplit_once('.').is_some_and(|(_, ext)| OPENABLE.contains(&ext))
+}
+
 /// Extensions the batch commands pick up from a folder.
 #[cfg(not(target_arch = "wasm32"))]
 const OPENABLE: &[&str] = &[
-    "pdn", "ora", "kra", "krz", "psd", "psb", "pcraft", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "exr", "hdr", "qoi", "ico", "pnm",
-    "ppm", "pgm", "fits", "fit", "fts", "dpx", "heic", "heif", "hif", "dng", "cr2", "nef", "nrw", "arw", "pef", "svg", "svgz", "af", "afdesign", "afphoto",
-    "afpub",
+    "pdn", "ora", "xcf", "xcfgz", "kra", "krz", "psd", "psb", "pcraft", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "exr", "hdr", "qoi",
+    "ico", "pnm", "ppm", "pgm", "fits", "fit", "fts", "dpx", "heic", "heif", "hif", "dng", "cr2", "nef", "nrw", "arw", "pef", "svg", "svgz", "af", "afdesign",
+    "afphoto", "afpub",
 ];
 
 /// Whether saving `doc` as a TIFF writes Photoshop layer data (anything beyond a lone
@@ -802,7 +810,7 @@ fn exposure_text(t: f64) -> Option<String> {
         return None;
     }
     let r = 1.0 / t;
-    if t < 1.0 && (r - r.round()).abs() <= r * 0.01 {
+    if t < 1.0 && r.round() > 1.0 && (r - r.round()).abs() <= r * 0.01 {
         return Some(format!("1/{} s", r.round()));
     }
     Some(format!("{} s", short_num(t, if t < 1.0 { 2 } else { 1 })))
@@ -1251,7 +1259,9 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let actions = crate::actions_cmds::ActionState { list, playing: s.actions.playing, playback_stack: s.actions.playback_stack.clone(), ..Default::default() };
     let names = batch_naming::plan(&inputs, &output, &format, p)?;
     let save = SaveOpts::from_params(s, p, cmd)?;
-    let run = |scratch: &mut Session| {
+    let authorize = s.authorize;
+    let run = move |scratch: &mut Session| {
+        scratch.authorize = authorize;
         scratch.actions = actions.clone();
         for (id, params) in &steps {
             let r = scratch.execute(id, params.clone())?;

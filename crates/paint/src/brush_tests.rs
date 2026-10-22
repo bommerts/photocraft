@@ -155,6 +155,8 @@ fn pencil_dabs_sit_on_the_pixel_grid() {
     // Odd sizes centre on the pixel holding the point, even ones on the nearest corner.
     assert_eq!(grid_center(10.0, 5.0, 1.0), (10.5, 5.5));
     assert_eq!(grid_center(10.9, 5.2, 3.0), (10.5, 5.5));
+    assert_eq!(grid_center(10.0 - 5e-8, 5.0 - 5e-8, 1.0), (10.5, 5.5));
+    assert_eq!(grid_center(10.0 - 2e-7, 5.0 - 2e-7, 1.0), (9.5, 4.5));
     assert_eq!(grid_center(10.4, 5.6, 2.0), (10.0, 6.0));
     assert_eq!(grid_square(10.2, 5.7, 1.0), [10.0, 5.0, 11.0, 6.0]);
     assert_eq!(grid_square(10.2, 5.7, 4.0), [8.0, 4.0, 12.0, 8.0]);

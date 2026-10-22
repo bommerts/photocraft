@@ -328,6 +328,7 @@
 	Blending Options…	レイヤー効果…
 	Bevel & Emboss…	ベベルとエンボス…
 	Use Global Light	グローバルライトを使用
+	Overprint	オーバープリント
 	Inner Shadow…	シャドウ (内側)…
 	Inner Glow…	光彩 (内側)…
 	Satin…	サテン…
@@ -3667,6 +3668,32 @@ cameraData	Lens	レンズ
 	Mirror	ミラー
 	Output Settings	出力設定
 	Output To	出力先
+
+	Animation Options	アニメーションオプション
+	Entire Document	ドキュメント全体
+	Filter Options	フィルターオプション
+	Layer Bounds	レイヤーの境界
+	Layers Panel Options	レイヤーパネルオプション
+	New Artboard…	新規アートボード…
+	New Group…	新規グループ…
+	Prevent Auto-Nesting	自動的な入れ子を防ぐ
+	Show Layers	レイヤーを表示
+	Thumbnail Contents	サムネールの内容
+	Thumbnail Size	サムネールのサイズ
+	Use Default Masks on Fill Layers	塗りつぶしレイヤーにデフォルトのマスクを使用
+	Expand New Effects	新しい効果を展開
+	Add “copy” to Copied Layers and Groups	コピーしたレイヤーとグループの名前に「コピー」を追加
+	Preview on canvas when reordering layers	レイヤーの並べ替え時にカンバスでプレビュー
+	Show layer mask badges	レイヤーマスクのバッジを表示
+
+# Smart Filter editors
+	Blending Options ({filter})	描画オプション ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	レイヤー効果とスマートフィルターを非表示  ({key}+クリック: すべてのレイヤー)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	レイヤー効果とスマートフィルターを表示  ({key}+クリック: すべてのレイヤー)
+	Wait for the current job to finish.	現在の処理が完了するまでお待ちください。
+	The document or Smart Filter changed. Reopen its dialog.	ドキュメントまたはスマートフィルターが変更されました。ダイアログを開き直してください。
+	Opacity must be between 0% and 100%.	不透明度は0%から100%の範囲で指定してください。
+	Dissolve is approximated: it blends without Photoshop's dither.	ディザ合成は近似です。Photoshop のディザなしでブレンドします。
 	Loading fonts…	フォントを読み込み中…
 	Response curve	応答カーブ
 	Simulate Pressure	筆圧をシミュレート
@@ -3952,6 +3979,10 @@ curves	Smooth	スムーズ
 	DDS Options	DDS オプション
 	Compression	圧縮
 	Generate Mipmaps	ミップマップを生成
+
+# Color Table (.act) dialog
+	There is no color table to save.	保存するカラーテーブルがありません。
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{file} に {n} 色を保存しました
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU アダプター

@@ -334,6 +334,7 @@
 	Blending Options…	Možnosti prolnutí…
 	Bevel & Emboss…	Úkos a reliéf…
 	Use Global Light	Použít globální světlo
+	Overprint	Přetisk
 	Inner Shadow…	Vnitřní stín…
 	Inner Glow…	Vnitřní záře…
 	Satin…	Satén…
@@ -2667,6 +2668,36 @@ cameraData	Lens	Objektiv
 	Duplicate Layer	Duplikovat vrstvu
 	Contract	Zúžit
 
+	Animation Options	Možnosti animace
+	Entire Document	Celý dokument
+	Filter Options	Možnosti filtrování
+	Layer Bounds	Hranice vrstvy
+	Layers Panel Options	Možnosti panelu Vrstvy
+	Lock Layers	Zamknout vrstvy
+	New Artboard…	Nové kreslicí plátno…
+	New Group	Nová skupina
+	New Group…	Nová skupina…
+	New Layer…	Nová vrstva…
+	Panel Options…	Možnosti panelu…
+	Prevent Auto-Nesting	Zabránit automatickému vnoření
+	Show Layers	Zobrazit vrstvy
+	Thumbnail Contents	Obsah miniatur
+	Thumbnail Size	Velikost miniatur
+	Use Default Masks on Fill Layers	Používat výchozí masky u vrstev výplně
+	Expand New Effects	Rozbalovat nové efekty
+	Add “copy” to Copied Layers and Groups	Přidávat „kopie“ ke kopírovaným vrstvám a skupinám
+	Preview on canvas when reordering layers	Zobrazovat náhled na plátně při změně pořadí vrstev
+	Show layer mask badges	Zobrazovat odznaky masek vrstev
+
+# Smart Filter editors
+	Blending Options ({filter})	Volby prolnutí ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Skrýt efekty vrstvy a inteligentní filtry  (kliknutí s {key}: všechny vrstvy)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Zobrazit efekty vrstvy a inteligentní filtry  (kliknutí s {key}: všechny vrstvy)
+	Wait for the current job to finish.	Počkejte na dokončení aktuální úlohy.
+	The document or Smart Filter changed. Reopen its dialog.	Dokument nebo inteligentní filtr se změnil. Znovu otevřete jeho dialog.
+	Opacity must be between 0% and 100%.	Krytí musí být mezi 0% a 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Režim Rozpustit je pouze aproximován: prolíná bez ditheringu Photoshopu.
+
 # Dynamic labels the tl! literal scanner cannot see: filter and Filter Gallery parameter names and
 # choices (humanized from their keys), Camera Raw controls, render filters (Flame, Picture Frame, Tree),
 # measurement columns, file info fields and the macOS application menu. Translated the same way as
@@ -3088,7 +3119,6 @@ cameraData	Lens	Objektiv
 	Liquify	Zkapalnit
 	List	Seznam
 	Load Selection	Načíst výběr
-	Lock Layers	Zamknout vrstvy
 	Locked	Zamčeno
 	Long Lines	Dlouhé čáry
 	Long Strokes	Dlouhé tahy
@@ -3136,11 +3166,9 @@ cameraData	Lens	Objektiv
 	Neon Glow	Neonová záře
 	Neutralize	Neutralizovat
 	New Channel	Nový kanál
-	New Group	Nová skupina
 	New Guide	Nové vodítko
 	New Guide Layout	Nové rozvržení vodítek
 	New Layer Comp	Nová kompozice vrstev
-	New Layer…	Nová vrstva…
 	New Video Layer from File	Nová video vrstva ze souboru
 	New document	Nový dokument
 	New document…     ⌘N	Nový dokument…     ⌘N
@@ -3884,6 +3912,10 @@ navigator	Zoom	Zvětšení
 # DDS Options (#1327)
 	DDS Options	Možnosti DDS
 	Generate Mipmaps	Generovat mipmapy
+
+# Color Table (.act) dialog
+	There is no color table to save.	Neexistuje žádná tabulka barev k uložení.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Uložena {n} barva do {file}|Uloženy {n} barvy do {file}|Uloženo {n} barev do {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptér GPU

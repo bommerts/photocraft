@@ -247,6 +247,7 @@
 	Inner Glow…	Внутреннее свечение…
 	Bevel & Emboss…	Тиснение…
 	Use Global Light	Использовать глобальный свет
+	Overprint	Наложение
 	Satin…	Глянец…
 	Color Overlay…	Наложение цвета…
 	Gradient Overlay…	Наложение градиента…
@@ -2998,6 +2999,33 @@ cameraData	Lens	Объектив
 	Output To	Вывод в
 	Duplicate Layer	Дубликат слоя
 	Contract	Сжать
+
+	Animation Options	Параметры анимации
+	Entire Document	Весь документ
+	Filter Options	Параметры фильтра
+	Layer Bounds	Границы слоя
+	Layers Panel Options	Параметры панели «Слои»
+	Lock Layers	Блокировка слоёв
+	New Artboard…	Новая монтажная область…
+	New Group…	Новая группа…
+	Prevent Auto-Nesting	Запретить автоматическое вложение
+	Show Layers	Показать слои
+	Thumbnail Contents	Содержимое миниатюр
+	Thumbnail Size	Размер миниатюр
+	Use Default Masks on Fill Layers	Использовать маски по умолчанию для слоёв-заливок
+	Expand New Effects	Раскрывать новые эффекты
+	Add “copy” to Copied Layers and Groups	Добавлять «копия» к дублированным слоям и группам
+	Preview on canvas when reordering layers	Предпросмотр на холсте при изменении порядка слоёв
+	Show layer mask badges	Показывать значки типов масок слоя
+
+# Smart Filter editors
+	Blending Options ({filter})	Параметры наложения ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Скрыть эффекты слоя и смарт-фильтры  ({key}-клик: все слои)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Показать эффекты слоя и смарт-фильтры  ({key}-клик: все слои)
+	Wait for the current job to finish.	Дождитесь завершения текущей задачи.
+	The document or Smart Filter changed. Reopen its dialog.	Документ или смарт-фильтр изменился. Откройте его диалог заново.
+	Opacity must be between 0% and 100%.	Непрозрачность должна быть от 0% до 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Растворение приближённое: смешивание без дизеринга Photoshop.
 	Loading fonts…	Загрузка шрифтов…
 	Response curve	Кривая отклика
 	Tool	Инструмент
@@ -3251,6 +3279,10 @@ curves	Smooth	Сгладить
 	DDS Options	Параметры DDS
 	Compression	Сжатие
 	Generate Mipmaps	Создать MIP-карты
+
+# Color Table (.act) dialog
+	There is no color table to save.	Нет таблицы цветов для сохранения.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Сохранён {n} цвет в {file}|Сохранены {n} цвета в {file}|Сохранено {n} цветов в {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Адаптер GPU

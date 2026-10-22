@@ -514,6 +514,29 @@ fn define_brush_from_selection_survives_allocation_failure() {
 }
 
 #[test]
+fn define_brush_from_selection_survives_failure_of_the_second_allocation() {
+    // Review of #5469: fail_next_for_test trips on the first buffer, so the second fallible
+    // call (the selection-mask read) did not have its own regression. Count the tip buffer as
+    // a clean attempt and fail the mask read instead; both report the same command purpose,
+    // and the command must still bow out before touching anything.
+    let mut s = session(40, 40);
+    s.execute("select.rect", json!({"x": 5, "y": 5, "width": 20, "height": 20})).unwrap();
+    let pixels_before = surface(&s);
+    let brush_before = s.tools.brush.clone();
+    let presets_before = s.tools.presets.clone();
+    let history_before = s.active().unwrap().history.past_len();
+    crate::allocation::fail_after_for_test(1);
+    let result = s.execute("brush.defineFromSelection", json!({"name": "Blob"}));
+    let _ = crate::allocation::capacity::<u8>(0, "reset failpoint");
+    assert!(result.is_err(), "an allocation failure must be reported, not panic");
+    assert!(result.as_ref().is_err_and(|e| e.to_string().contains("not enough memory for defining a brush from the selection")));
+    assert_eq!(s.tools.brush, brush_before, "the current brush is unchanged");
+    assert_eq!(s.tools.presets, presets_before, "the preset list is unchanged");
+    assert_eq!(s.active().unwrap().history.past_len(), history_before, "no history step was recorded");
+    assert!(same_pixels(&pixels_before, &surface(&s), s.active().unwrap().doc.bounds()), "the document pixels are unchanged");
+}
+
+#[test]
 fn works_on_cmyk_and_16_bit() {
     for (mode, depth) in [("cmyk", 8), ("rgb", 16), ("grayscale", 32)] {
         let mut s = Session::new();
