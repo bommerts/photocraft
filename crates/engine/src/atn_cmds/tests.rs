@@ -2721,3 +2721,105 @@ fn hue_saturation_uses_photoshops_hue_key() {
     normalise(&mut p);
     assert_eq!(p["hue"], json!(30), "{p}");
 }
+
+#[test]
+fn adjustment_make_preserves_each_layer_property_and_settings_at_both_depths() {
+    let adjustments = [
+        ("levels", json!({"inBlack": 12, "inWhite": 239, "gamma": 1.27, "outBlack": 7, "outWhite": 247})),
+        ("curves", json!({"points": [[0, 7], [128, 155], [255, 247]]})),
+    ];
+    for (kind, params) in adjustments {
+        let adjustment = adjustment_by_suffix(kind).unwrap();
+        let metadata = [
+            desc("AdjL").with("Nm  ", text("Independent named adjustment")),
+            desc("AdjL").with("Opct", pct(37.0)),
+            desc("AdjL").with("Md  ", enm("BlnM", "Mltp")),
+            desc("AdjL").with("Grup", D::Boolean(true)),
+            desc("AdjL")
+                .with("Nm  ", text("Independent named adjustment"))
+                .with("Opct", pct(37.0))
+                .with("Md  ", enm("BlnM", "Mltp"))
+                .with("Grup", D::Boolean(true)),
+            desc("AdjL"),
+        ];
+        for depth in [8, 16] {
+            for (case, using) in metadata.iter().enumerate() {
+                let using = using.clone().with("Type", D::Descriptor((adjustment.to)(&params).unwrap()));
+                let make = desc("null").with("null", class_ref("AdjL")).with("Usng", D::Descriptor(using));
+                let data = set_of("Metadata", vec![("Make", vec![item("make", "Make", Some(make))])]);
+                let mut s = Session::new();
+                s.execute("file.new", json!({"width": 4, "height": 3, "depth": depth})).unwrap();
+                s.execute("layer.new.layer", json!({"name": "Pixels"})).unwrap();
+                let base = s.active().unwrap().active_layer.unwrap();
+                let loaded = s.execute("actions.load", json!({"data": data})).unwrap();
+                assert_eq!(loaded["unsupported"], json!([]));
+                assert_eq!(s.actions.list[0].steps.len(), 1, "{kind}/{depth}/{case}");
+                let result = s.execute("actions.play", json!({"action": "Make"})).unwrap();
+                assert!(result.get("failed").is_none(), "{kind}/{depth}/{case}: {result}");
+                let st = s.active().unwrap();
+                let layer = st.doc.layer(st.active_layer.unwrap()).unwrap();
+                if case == 0 || case == 4 {
+                    assert_eq!(layer.name, "Independent named adjustment");
+                }
+                assert_eq!(layer.opacity, if case == 1 || case == 4 { 94.0 / 255.0 } else { 1.0 });
+                assert_eq!(layer.blend, if case == 2 || case == 4 { photocraft_color::BlendMode::Multiply } else { photocraft_color::BlendMode::Normal });
+                assert_eq!(layer.clipped, case == 3 || case == 4);
+                assert_eq!(layer.content, photocraft_doc::LayerContent::Adjustment(crate::commands::adjustment_from_params(kind, &params)));
+                let base = st.doc.layer(base).unwrap();
+                assert_eq!(base.name, "Pixels");
+                assert_eq!(base.opacity, 1.0);
+                assert!(!base.clipped);
+                // Saving and loading the single command keeps all the properties.
+                let saved = s.execute("actions.save", json!({"set": "Metadata"})).unwrap();
+                let imported = import(&photocraft_paint::tile::b64_decode(saved["data"].as_str().unwrap()).unwrap()).unwrap();
+                assert!(imported.unsupported.is_empty());
+                assert_eq!(imported.actions[0].steps, s.actions.list[0].steps);
+                assert!(s.undo());
+                assert_eq!(s.active().unwrap().doc.layers.len(), 2, "one undo removes the whole adjustment");
+                assert!(s.redo());
+                let st = s.active().unwrap();
+                let restored = st.doc.layer(st.active_layer.unwrap()).unwrap();
+                assert_eq!(restored.opacity, if case == 1 || case == 4 { 94.0 / 255.0 } else { 1.0 });
+                assert_eq!(restored.clipped, case == 3 || case == 4);
+            }
+        }
+    }
+}
+
+#[test]
+fn adjustment_make_unreadable_metadata_stays_a_kept_photoshop_step() {
+    for using in [
+        desc("AdjL").with("Nm  ", long(2.0)),
+        desc("AdjL").with("Opct", text("37")),
+        desc("AdjL").with("Opct", pct(-1.0)),
+        desc("AdjL").with("Opct", pct(101.0)),
+        desc("AdjL").with("Opct", D::Double(f64::NAN)),
+        desc("AdjL").with("Md  ", enm("BlnM", "unknownBlend")),
+        desc("AdjL").with("Md  ", text("Multiply")),
+        desc("AdjL").with("Grup", text("true")),
+    ] {
+        let using = using.with("Type", D::Descriptor(desc("Lvls").with("presetKind", enm("presetKindType", "presetKindDefault"))));
+        let make = desc("null").with("null", class_ref("AdjL")).with("Usng", D::Descriptor(using));
+        assert!(matches!(make_from(&make), Mapped::Unsupported { harmless: false }));
+    }
+}
+
+#[test]
+fn adjustment_make_command_rejects_bad_properties_without_editing() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 4, "height": 3})).unwrap();
+    for params in [
+        json!({"name": false}),
+        json!({"opacity": "37"}),
+        json!({"opacity": -0.1}),
+        json!({"opacity": 1.1}),
+        json!({"opacity": null}),
+        json!({"blend": false}),
+        json!({"blend": "unknown"}),
+        json!({"blend": "Pass Through"}),
+        json!({"clipped": 1}),
+    ] {
+        assert!(s.execute("layer.newAdjustmentLayer.levels", params.clone()).is_err(), "{params}");
+        assert_eq!(s.active().unwrap().doc.layers.len(), 1, "{params} must not create a layer");
+    }
+}

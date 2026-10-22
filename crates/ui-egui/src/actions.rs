@@ -131,6 +131,17 @@ fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>)
         }
         // The dialog toggle: show the step's dialog with its recorded values and continue
         // from the next step when it is confirmed (`resume`). Agents play headlessly.
+        if action.dialogs.contains(&i) && !app.automation_input && id == photocraft_engine::atn_cmds::STOP_MESSAGE {
+            let fields = json!({
+                STOP_MESSAGE_DIALOG: true, "__command": id, "__label": "Stop",
+                "message": p.get("message").and_then(Value::as_str).unwrap_or("Stop"),
+                "allowContinue": p.get("allowContinue").and_then(Value::as_bool).unwrap_or(false),
+                RESUME: {"action": action.name, "from": i.saturating_add(1)},
+            });
+            let dialog = app.ui.open_dialog(crate::state::DialogKind::Command, fields.as_object().cloned().unwrap_or_default());
+            paused = Some(json!({"step": i, "id": id, "dialog": dialog}));
+            break;
+        }
         if action.dialogs.contains(&i) && !app.automation_input && (crate::filter_dialog::has_dialog(id) || crate::adjust_dialog::has_dialog(id)) {
             let label = label_of(id);
             let dialog = crate::dialogs::open_command_dialog(app, id, &label);
@@ -476,6 +487,47 @@ pub fn insert_stop_confirm(app: &mut PhotocraftApp, fields: &serde_json::Map<Str
         }
     }
     Ok(r)
+}
+
+const STOP_MESSAGE_DIALOG: &str = "__actionStop";
+
+pub fn owns_stop_message(fields: &serde_json::Map<String, Value>) -> bool {
+    fields.contains_key(STOP_MESSAGE_DIALOG)
+}
+
+pub fn stop_message_body(ui: &mut egui::Ui, fields: &serde_json::Map<String, Value>) {
+    ui.set_min_width(320.0);
+    ui.add(egui::Label::new(fields.get("message").and_then(Value::as_str).unwrap_or("Stop")).wrap());
+}
+
+/// Continue is the default only when the recorded Stop allows it. A hard Stop has one button.
+pub fn stop_message_buttons(ui: &mut egui::Ui, fields: &serde_json::Map<String, Value>) -> Option<bool> {
+    use crate::widgets::{ButtonRole, DialogButton, dialog_buttons};
+    let allow = fields.get("allowContinue").and_then(Value::as_bool).unwrap_or(false);
+    let seen = ui.id().with("action-stop-seen");
+    let shown_before = ui.ctx().data(|m| m.get_temp::<bool>(seen).unwrap_or(false));
+    ui.ctx().data_mut(|m| m.insert_temp(seen, true));
+    let clicked = if allow {
+        dialog_buttons(ui, &[DialogButton::new(ButtonRole::Default, tl!("Continue"), 84.0), DialogButton::new(ButtonRole::Cancel, tl!("Stop"), 84.0)])
+    } else {
+        dialog_buttons(ui, &[DialogButton::new(ButtonRole::Default, tl!("Stop"), 84.0)])
+    };
+    match clicked {
+        Some(ButtonRole::Default) => Some(allow),
+        Some(_) => Some(false),
+        None if shown_before && ui.is_enabled() && ui.input(|i| i.key_pressed(egui::Key::Enter)) => Some(allow),
+        None => None,
+    }
+}
+
+pub fn stop_message_confirm(app: &mut PhotocraftApp, fields: &serde_json::Map<String, Value>) -> Result<Value, String> {
+    let allow = fields.get("allowContinue").and_then(Value::as_bool).unwrap_or(false);
+    if allow {
+        resume(app, fields)?;
+    } else {
+        stopped(app, fields);
+    }
+    Ok(json!({"continued": allow}))
 }
 
 /// The key a paused playback leaves in its dialog's fields: `{action, from}`.
@@ -1802,6 +1854,137 @@ mod tests {
             }
             assert_eq!(app.session.actions.playing, 0);
             assert!(app.session.actions.playback_stack.is_empty());
+        }
+    }
+
+    fn imported_stop_app(allow: bool, with_dialog: bool) -> PhotocraftApp {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 8, "height": 6})).unwrap();
+        let mut action = Action::new(
+            "Stop Test",
+            vec![
+                ("layer.setProps".into(), json!({"name": "Prefix"})),
+                (photocraft_engine::atn_cmds::STOP_MESSAGE.into(), json!({"message": "Check the mask before continuing", "allowContinue": allow})),
+                ("layer.new.layer".into(), json!({"name": "Suffix"})),
+            ],
+        );
+        if with_dialog {
+            action.dialogs.insert(1);
+        }
+        let (bytes, _) = photocraft_engine::atn_cmds::export("Stops", &[&action], &[], false).unwrap();
+        app.run("actions.load", json!({"data": photocraft_engine::paint::tile::b64_encode(&bytes)})).unwrap();
+        app
+    }
+
+    #[test]
+    fn imported_stop_messages_pause_and_respect_continue_or_stop() {
+        for allow in [true, false] {
+            for confirm in [true, false] {
+                let mut app = imported_stop_app(allow, true);
+                let paused = play(&mut app, &json!({"action": "Stop Test"})).unwrap();
+                assert_eq!(paused["ran"], 1);
+                assert_eq!(paused["paused"]["step"], 1, "{paused}");
+                let id = paused["paused"]["dialog"].as_u64().unwrap();
+                let d = app.ui.dialog_mut(id).unwrap();
+                assert_eq!(d.fields["message"], "Check the mask before continuing");
+                assert_eq!(d.fields["allowContinue"], allow);
+                assert_eq!(app.session.active().unwrap().doc.layers[0].name, "Prefix");
+                assert_eq!(app.session.active().unwrap().doc.layers.len(), 1);
+                assert_eq!(app.session.actions.playing, 0);
+                if confirm {
+                    crate::dialogs::confirm(&mut app, id).unwrap();
+                } else {
+                    crate::dialogs::cancel(&mut app, id).unwrap();
+                }
+                assert!(app.ui.dialogs.is_empty());
+                assert_eq!(app.session.active().unwrap().doc.layers.len(), if allow && confirm { 2 } else { 1 });
+                assert_eq!(app.session.active().unwrap().doc.layers[0].name, "Prefix");
+                assert_eq!(app.session.actions.playing, 0);
+                assert!(app.session.actions.playback_stack.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn imported_stop_without_dialog_or_in_automation_keeps_headless_behavior() {
+        for allow in [true, false] {
+            for automation in [true, false] {
+                let mut app = imported_stop_app(allow, automation);
+                app.automation_input = automation;
+                let result = play(&mut app, &json!({"action": "Stop Test"})).unwrap();
+                assert!(app.ui.dialogs.is_empty());
+                assert!(result.get("paused").is_none());
+                assert_eq!(result.get("failed").is_none(), allow);
+                assert_eq!(app.session.active().unwrap().doc.layers.len(), if allow { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn imported_stop_dialog_shows_message_and_applicable_buttons() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        for (allow, stop) in [(true, false), (true, true), (false, true)] {
+            let app = imported_stop_app(allow, true);
+            let mut h = Harness::builder().with_size(vec2(900.0, 600.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app);
+            PhotocraftApp::setup_context(&h.ctx, Default::default());
+            play(h.state_mut(), &json!({"action": "Stop Test"})).unwrap();
+            h.run_steps(3);
+            assert!(h.query_by_label("Check the mask before continuing").is_some());
+            assert_eq!(h.query_by_label("Continue").is_some(), allow);
+            assert!(h.query_by_role_and_label(egui::accesskit::Role::Button, "Stop").is_some());
+            if allow && stop {
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Stop").click();
+            } else if allow {
+                h.get_by_label("Continue").click();
+            } else {
+                h.key_press(egui::Key::Enter);
+            }
+            h.run_steps(3);
+            assert!(h.state().ui.dialogs.is_empty());
+            assert_eq!(h.state().session.active().unwrap().doc.layers.len(), if allow && !stop { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn imported_stop_restores_suspended_recording_once_for_every_exit() {
+        for allow in [true, false] {
+            for confirm in [true, false] {
+                let mut app = imported_stop_app(allow, true);
+                app.run("actions.record", json!({"name": "Owner"})).unwrap();
+                let result = play(&mut app, &json!({"action": "Stop Test"})).unwrap();
+                let id = result["paused"]["dialog"].as_u64().unwrap();
+                assert!(app.session.actions.recording.is_none());
+                if confirm {
+                    crate::dialogs::confirm(&mut app, id).unwrap();
+                } else {
+                    crate::dialogs::cancel(&mut app, id).unwrap();
+                }
+                assert!(app.session.actions.recording.is_some());
+                app.run("actions.stop", json!({})).unwrap();
+                let owner = app.session.actions.list.iter().find(|a| a.name == "Owner").unwrap();
+                assert_eq!(owner.steps, vec![("actions.play".into(), json!({"action": "Stop Test"}))]);
+                assert!(app.session.actions.playback_stack.is_empty());
+                assert_eq!(app.session.active().unwrap().doc.layers.len(), if allow && confirm { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual offscreen Stop dialog captures"]
+    fn write_imported_stop_dialog_previews() {
+        use egui_kittest::Harness;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../log/action-stop");
+        std::fs::create_dir_all(&dir).unwrap();
+        for theme in [crate::theme::ThemeKind::Pro, crate::theme::ThemeKind::Studio] {
+            for allow in [true, false] {
+                let mut app = imported_stop_app(allow, true);
+                app.ui.theme = theme;
+                let mut h = Harness::builder().with_size(vec2(900.0, 600.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app);
+                PhotocraftApp::setup_context(&h.ctx, theme);
+                play(h.state_mut(), &json!({"action": "Stop Test"})).unwrap();
+                h.run_steps(3);
+                h.render().unwrap().save(dir.join(format!("{}-{allow}.png", theme.id()))).unwrap();
+            }
         }
     }
 

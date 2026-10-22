@@ -1156,6 +1156,35 @@ const MASK_USING: &[(&str, &str)] = &[
     ("HdSl", "layer.layerMask.hideSelection"),
 ];
 
+/// Keep Make's surrounding layer properties on the same command as its adjustment (#8384).
+/// An unreadable property keeps the entire Photoshop step instead of silently changing it.
+fn adjustment_layer_steps(a: &Adjustment, t: Option<&Descriptor>, using: Option<&Descriptor>) -> Mapped {
+    let Mapped::Steps(mut steps) = adjustment_steps(a, "layer.newAdjustmentLayer.", t) else {
+        return Mapped::Unsupported { harmless: false };
+    };
+    let Some((_, Value::Object(p))) = steps.first_mut() else { return Mapped::Unsupported { harmless: false } };
+    if let Some(u) = using {
+        if u.get("Nm  ").is_some() {
+            let Some(n) = get_text(u, "Nm  ") else { return Mapped::Unsupported { harmless: false } };
+            p.insert("name".into(), n.into());
+        }
+        if u.get("Opct").is_some() {
+            let Some(o) = get_num(u, "Opct").filter(|o| (0.0..=100.0).contains(o)) else { return Mapped::Unsupported { harmless: false } };
+            // Photoshop stores layer opacity on a 0..255 scale even in a 16-bit document.
+            p.insert("opacity".into(), ((o * 255.0 / 100.0).round() / 255.0).into());
+        }
+        if u.get("Md  ").is_some() {
+            let Some(m) = get_enum(u, "Md  ").and_then(|m| blend_label(&m)) else { return Mapped::Unsupported { harmless: false } };
+            p.insert("blend".into(), m.into());
+        }
+        if u.get("Grup").is_some() {
+            let Some(clipped) = get_bool(u, "Grup") else { return Mapped::Unsupported { harmless: false } };
+            p.insert("clipped".into(), clipped.into());
+        }
+    }
+    Mapped::Steps(steps)
+}
+
 fn make_from(d: &Descriptor) -> Mapped {
     // Duplicate layer/group into a new document: `Mk` with a document class, a layer
     // `Usng`, an optional `Nm` (the new document's name) and an optional `LyrN`
@@ -1253,7 +1282,7 @@ fn make_from(d: &Descriptor) -> Mapped {
             step("layer.new.layer", Value::Object(p))
         }
         Some("AdjL") => match type_desc.and_then(|t| adjustment_by_class(&trimmed(&t.class_id))) {
-            Some(a) => adjustment_steps(a, "layer.newAdjustmentLayer.", type_desc),
+            Some(a) => adjustment_layer_steps(a, type_desc, using),
             None => Mapped::Unsupported { harmless: false },
         },
         Some("contentLayer") => match type_desc {
@@ -1408,7 +1437,19 @@ fn make_to(id: &str, p: &Value) -> Option<Descriptor> {
             } else {
                 (a.to)(p)?
             };
-            desc("null").with("null", class_ref("AdjL")).with("Usng", D::Descriptor(desc("AdjL").with("Type", D::Descriptor(t))))
+            {
+                let mut u = with_name("AdjL").with("Type", D::Descriptor(t));
+                if let Some(o) = jnum(p, "opacity") {
+                    u = u.with("Opct", pct(o * 100.0));
+                }
+                if let Some(m) = jstr(p, "blend") {
+                    u = u.with("Md  ", enm("BlnM", blend_ps(m)?));
+                }
+                if let Some(clipped) = jbool(p, "clipped") {
+                    u = u.with("Grup", D::Boolean(clipped));
+                }
+                desc("null").with("null", class_ref("AdjL")).with("Usng", D::Descriptor(u))
+            }
         }
     })
 }

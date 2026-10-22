@@ -444,9 +444,33 @@ pub(crate) const NEW_LAYER_PATH: &str =
 /// Add an adjustment layer above the active one; it takes the mask `mask_new_layer` builds from `p` (a path, the selection, or the default white mask).
 fn new_adjustment(s: &mut Session, adj: Adjustment, p: &Value, cmd: &str) -> Result<Value> {
     let label = format!("New {} Layer", adj.label());
-    let name = adj.label().to_string();
+    let default_name = adj.label().to_string();
+    let name = match p.get("name") {
+        None => None,
+        Some(Value::String(n)) => Some(n.clone()),
+        Some(_) => return Err(bad(cmd, "name must be a string")),
+    };
+    let opacity = match p.get("opacity") {
+        None => 1.0,
+        Some(v) => v.as_f64().filter(|o| o.is_finite() && (0.0..=1.0).contains(o)).ok_or_else(|| bad(cmd, "opacity must be a number in 0..1"))? as f32,
+    };
+    let blend = match p.get("blend") {
+        None => BlendMode::Normal,
+        Some(Value::String(m)) => {
+            blend_from_str(m).filter(|b| *b != BlendMode::PassThrough).ok_or_else(|| bad(cmd, "blend must be a supported non-group blend mode"))?
+        }
+        Some(_) => return Err(bad(cmd, "blend must be a string")),
+    };
+    let clipped = match p.get("clipped") {
+        None => false,
+        Some(Value::Bool(v)) => *v,
+        Some(_) => return Err(bad(cmd, "clipped must be a boolean")),
+    };
     let id = s.edit(&label, |doc, active| {
-        let mut l = Layer::new(doc.next_layer_name(&name), LayerContent::Adjustment(adj));
+        let mut l = Layer::new(name.unwrap_or_else(|| doc.next_layer_name(&default_name)), LayerContent::Adjustment(adj));
+        l.opacity = opacity;
+        l.blend = blend;
+        l.clipped = clipped;
         mask_new_layer(doc, &mut l, p, cmd, true)?;
         let id = doc.insert_above(*active, l);
         *active = Some(id);
@@ -1418,7 +1442,7 @@ fn build() -> Vec<CommandSpec> {
             label,
             menu: &["Layer", "New Adjustment Layer"],
             shortcut: None,
-            params: Box::leak(format!("{params} + {{{NEW_LAYER_PATH}}}").into_boxed_str()),
+            params: Box::leak(format!(r#"{params} + {{{NEW_LAYER_PATH},"name":str?,"opacity":0..1?,"blend":"Multiply|…"?,"clipped":bool?}}"#).into_boxed_str()),
             enabled: has_doc,
             run: |s, p| {
                 let kind = p.get("__kind").and_then(Value::as_str).unwrap_or("invert").to_string();
