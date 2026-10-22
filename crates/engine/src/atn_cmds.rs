@@ -1168,7 +1168,10 @@ fn adjustment_layer_steps(a: &Adjustment, t: Option<&Descriptor>, using: Option<
             let Some(n) = get_text(u, "Nm  ") else { return Mapped::Unsupported { harmless: false } };
             p.insert("name".into(), n.into());
         }
-        if u.get("Opct").is_some() {
+        if let Some(opacity) = u.get("Opct") {
+            if matches!(opacity, D::UnitFloat { unit, .. } if *unit != PCT) {
+                return Mapped::Unsupported { harmless: false };
+            }
             let Some(o) = get_num(u, "Opct").filter(|o| (0.0..=100.0).contains(o)) else { return Mapped::Unsupported { harmless: false } };
             // Photoshop stores layer opacity on a 0..255 scale even in a 16-bit document.
             p.insert("opacity".into(), ((o * 255.0 / 100.0).round() / 255.0).into());
