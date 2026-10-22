@@ -330,6 +330,7 @@
 	Blending Options…	Opciones de fusión…
 	Bevel & Emboss…	Bisel y relieve…
 	Use Global Light	Usar luz global
+	Overprint	Sobreimprimir
 	Inner Shadow…	Sombra interior…
 	Inner Glow…	Resplandor interior…
 	Satin…	Satinado…
@@ -2738,6 +2739,35 @@ cameraData	Lens	Objetivo
 	Mirror	Reflejar
 	Output Settings	Ajustes de salida
 	Output To	Salida a
+
+	Animation Options	Opciones de animación
+	Entire Document	Documento entero
+	Filter Options	Opciones de filtro
+	Layer Bounds	Límites de capa
+	Layers Panel Options	Opciones del panel Capas
+	Lock Layers	Bloquear capas
+	New Artboard…	Nueva mesa de trabajo…
+	New Group…	Nuevo grupo…
+	New Layer…	Nueva capa…
+	Panel Options…	Opciones de panel…
+	Prevent Auto-Nesting	Impedir anidación automática
+	Show Layers	Mostrar capas
+	Thumbnail Contents	Contenido de miniaturas
+	Thumbnail Size	Tamaño de miniaturas
+	Use Default Masks on Fill Layers	Usar máscaras predeterminadas en capas de relleno
+	Expand New Effects	Expandir nuevos efectos
+	Add “copy” to Copied Layers and Groups	Añadir «copia» a las capas y grupos duplicados
+	Preview on canvas when reordering layers	Previsualizar en el lienzo al reordenar capas
+	Show layer mask badges	Mostrar insignias de máscaras de capa
+
+# Smart Filter editors
+	Blending Options ({filter})	Opciones de fusión ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Ocultar efectos de capa y filtros inteligentes  ({key}-clic: todas las capas)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Mostrar efectos de capa y filtros inteligentes  ({key}-clic: todas las capas)
+	Wait for the current job to finish.	Espere a que termine la tarea actual.
+	The document or Smart Filter changed. Reopen its dialog.	El documento o el filtro inteligente ha cambiado. Vuelva a abrir su diálogo.
+	Opacity must be between 0% and 100%.	La opacidad debe estar entre 0% y 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Disolver es aproximado: se fusiona sin el tramado de Photoshop.
 	Loading fonts…	Cargando fuentes…
 	Response curve	Curva de respuesta
 	Tool	Herramienta
@@ -2831,7 +2861,6 @@ curves	Smooth	Suavizar
 @id	select.all	Seleccionar todo
 	Delete Smart Filters	Eliminar filtros inteligentes
 	Enable Smart Filters	Activar filtros inteligentes
-	New Layer…	Nueva capa…
 	Delete Layer…	Eliminar capa…
 	Select Similar Colors	Seleccionar colores similares
 	Canvas rotation	Rotación del lienzo
@@ -2908,7 +2937,6 @@ curves	Smooth	Suavizar
 	Automatically Create New Snapshot When Saving	Crear automáticamente una instantánea nueva al guardar
 	Show New Snapshot Dialog by Default	Mostrar de forma predeterminada el cuadro de diálogo Nueva instantánea
 	Clear History	Borrar historial
-	Panel Options…	Opciones de panel…
 	View menu	Menú Vista
 	Keep view in sync	Mantener la vista sincronizada
 	{zoom}%	{zoom}%
@@ -3819,7 +3847,6 @@ layerLabel	No Color	Sin color
 	Lens Flare	Destello
 	Lighting Effects	Efectos de iluminación
 	Liquify	Licuar
-	Lock Layers	Bloquear capas
 	Lum	Lum
 	Match Color	Igualar color
 	Merge to HDR Pro	Combinar en HDR Pro
@@ -4236,6 +4263,10 @@ navigator	Zoom	Zoom
 # DDS Options (#1327)
 	DDS Options	Opciones de DDS
 	Generate Mipmaps	Generar mipmaps
+
+# Color Table (.act) dialog
+	There is no color table to save.	No hay ninguna tabla de colores para guardar.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Se guardó {n} color en {file}|Se guardaron {n} colores en {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Adaptador de GPU

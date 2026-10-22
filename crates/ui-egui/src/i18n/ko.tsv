@@ -2190,6 +2190,7 @@
 	32 bit (float)	32비트(부동 소수점)
 	Floating point	부동 소수점
 	Use Global Light	전체 조명 사용
+	Overprint	중복 인쇄
 	Native file drag-and-drop is unavailable	파일 드래그 앤 드롭을 사용할 수 없습니다
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	Wayland에서는 아직 파일 드래그 앤 드롭을 지원하지 않습니다. 파일 › 열기를 사용하거나, 파일 관리자에서 이미지를 복사한 뒤 {paste}(으)로 붙여넣으세요.
 	To drop files, start PhotoCraft under XWayland: `{command}`	파일을 끌어다 놓으려면 XWayland에서 PhotoCraft를 실행하세요: `{command}`
@@ -3242,6 +3243,35 @@ cameraData	Lens	렌즈
 	Mirror	미러
 	Output Settings	출력 설정
 	Output To	출력 위치
+
+	Animation Options	애니메이션 옵션
+	Entire Document	전체 문서
+	Filter Options	필터 옵션
+	Layer Bounds	레이어 경계
+	Layers Panel Options	레이어 패널 옵션
+	New Artboard…	새 아트보드…
+	New Group	새 그룹
+	New Group…	새 그룹…
+	New Layer…	새 레이어…
+	Panel Options…	패널 옵션…
+	Prevent Auto-Nesting	자동 중첩 방지
+	Show Layers	레이어 표시
+	Thumbnail Contents	축소판 내용
+	Thumbnail Size	축소판 크기
+	Use Default Masks on Fill Layers	칠 레이어에 기본 마스크 사용
+	Expand New Effects	새 효과 펼치기
+	Add “copy” to Copied Layers and Groups	복사한 레이어 및 그룹에 “복사” 추가
+	Preview on canvas when reordering layers	레이어 순서 변경 시 캔버스에서 미리보기
+	Show layer mask badges	레이어 마스크 배지 표시
+
+# Smart Filter editors
+	Blending Options ({filter})	혼합 옵션 ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	레이어 효과 및 스마트 필터 숨기기  ({key}+클릭: 모든 레이어)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	레이어 효과 및 스마트 필터 표시  ({key}+클릭: 모든 레이어)
+	Wait for the current job to finish.	현재 작업이 완료될 때까지 기다리세요.
+	The document or Smart Filter changed. Reopen its dialog.	문서 또는 스마트 필터가 변경되었습니다. 대화 상자를 다시 여세요.
+	Opacity must be between 0% and 100%.	불투명도는 0%에서 100% 사이여야 합니다.
+	Dissolve is approximated: it blends without Photoshop's dither.	디졸브는 근사치입니다. Photoshop의 디더링 없이 혼합됩니다.
 	Loading fonts…	글꼴 불러오는 중…
 	Response curve	응답 곡선
 	Simulate Pressure	압력 시뮬레이션
@@ -3461,6 +3491,10 @@ curves	Smooth	매끄럽게
 	DDS Options	DDS 옵션
 	Compression	압축
 	Generate Mipmaps	밉맵 생성
+
+# Color Table (.act) dialog
+	There is no color table to save.	저장할 색상표가 없습니다.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{file}에 색상 {n}개 저장
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU 어댑터

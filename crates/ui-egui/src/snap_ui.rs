@@ -256,7 +256,7 @@ fn begin(app: &mut PhotocraftApp, p: [f64; 2], mods: egui::Modifiers) {
         // A guide never snaps to itself (or other guides).
         targets = targets.filtered(|k| k != SnapKind::Guide);
     }
-    if matches!(gesture, Gesture::SelectionMove { .. }) {
+    if matches!(gesture, Gesture::SelectionMove { .. }) || (matches!(gesture, Gesture::Move { .. }) && crate::move_ui::moves_selected_pixels_with(app, tool)) {
         // A moving selection never snaps back to where it started.
         targets = targets.filtered(|k| k != SnapKind::Selection);
     }
@@ -1166,6 +1166,12 @@ mod tests {
         assert_eq!(snap_guide(&mut app, true, 297.0), 300.0);
         assert_eq!(snap_guide(&mut app, false, 150.0), 150.0, "document centre");
         assert_eq!(snap_guide(&mut app, false, 170.0), 170.0);
+        // Dragging an existing guide with the Move tool while a selection is active still snaps to the selection.
+        app.run("view.newGuide", json!({"orientation": "vertical", "position": 10})).unwrap();
+        app.run("select.rect", json!({"x": 100, "y": 100, "width": 50, "height": 40})).unwrap();
+        app.ui.tool = Tool::Move;
+        begin(&mut app, [10.0, 50.0], egui::Modifiers::NONE);
+        assert_eq!(apply(&mut app, [98.0, 50.0], egui::Modifiers::NONE)[0], 100.0);
         app.ui.extras.snap = false;
         assert_eq!(snap_guide(&mut app, true, 297.0), 297.0);
     }

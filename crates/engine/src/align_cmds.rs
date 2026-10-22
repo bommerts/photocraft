@@ -261,6 +261,8 @@ fn auto_blend(s: &mut Session, p: &Value) -> Result<Value> {
     let label = "Auto-Blend Layers";
     let (new_layer, depth_layer) = s.edit(label, |doc, active| {
         for (id, wt) in ids.iter().zip(&weights) {
+            // The Background can't have a mask: it becomes a normal layer first, as in Photoshop.
+            crate::extra_cmds::background_to_layer_for_mask(doc, *id);
             let l = doc.layer_mut(*id).ok_or(EngineError::NoLayer(*id))?;
             let mut mask = LayerMask::hide_all();
             mask.surface.write_region(area, wt);
@@ -450,6 +452,28 @@ mod tests {
             s.undo();
             assert!(s.active().unwrap().doc.layer(left).unwrap().mask.is_none());
         }
+    }
+
+    /// #5745: the Background can't take a mask, so Auto-Blend turns it into a normal layer first.
+    #[test]
+    fn auto_blend_turns_the_background_into_a_layer() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 200, "height": 60, "background": "white"})).unwrap();
+        let bg = s.active().unwrap().doc.background().unwrap().id;
+        s.execute("layer.new.layer", json!({"name": "right"})).unwrap();
+        s.edit("r", |doc, active| {
+            doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap().fill_rect(Rect::new(70, 0, 200, 60), &[0.9, 0.6, 0.2, 1.0]);
+            Ok(())
+        })
+        .unwrap();
+        let right = s.active().unwrap().active_layer.unwrap();
+        select(&mut s, &[bg, right]);
+        s.execute("edit.autoBlendLayers", json!({"method": "panorama"})).unwrap();
+        let doc = &s.active().unwrap().doc;
+        assert!(!doc.is_background(bg), "the Background became a layer to take its mask");
+        assert!(doc.layer(bg).unwrap().mask.is_some());
+        s.undo();
+        assert!(s.active().unwrap().doc.is_background(bg), "undo restores the Background");
     }
 
     #[test]

@@ -2638,6 +2638,7 @@
 	32 bit (float)	32 bita (pokretni zarez)
 	Floating point	Pokretni zarez
 	Use Global Light	Koristi globalno svetlo
+	Overprint	Pretisak
 	Native file drag-and-drop is unavailable	Izvorno prevlačenje i otpuštanje datoteka nije dostupno
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	Izvorno prevlačenje i otpuštanje datoteka još nije podržano na Wayland-u. Koristite Datoteka › Otvori ili kopirajte sliku u menadžeru datoteka i nalepite je pomoću {paste}.
 	To drop files, start PhotoCraft under XWayland: `{command}`	Da biste otpuštali datoteke, pokrenite PhotoCraft pod XWayland-om: `{command}`
@@ -4305,6 +4306,33 @@ shape	Appearance	Izgled
 	Lines/Inch	Linija/inč
 	Lines/Centimeter	Linija/centimetar
 	Ellipse	Elipsa
+
+# Layers panel options
+	Add “copy” to Copied Layers and Groups	Dodaj „kopija” kopiranim slojevima i grupama
+	Animation Options	Opcije animacije
+	Entire Document	Ceo dokument
+	Expand New Effects	Proširi nove efekte
+	Filter Options	Opcije filtera
+	Layer Bounds	Granice sloja
+	Layers Panel Options	Opcije panela Slojevi
+	New Artboard…	Nova radna tabla…
+	New Group…	Nova grupa…
+	Prevent Auto-Nesting	Spreči automatsko ugnežđavanje
+	Preview on canvas when reordering layers	Pregled na platnu pri promeni redosleda slojeva
+	Show Layers	Prikaži slojeve
+	Show layer mask badges	Prikaži oznake maske sloja
+	Thumbnail Contents	Sadržaj sličice
+	Thumbnail Size	Veličina sličice
+	Use Default Masks on Fill Layers	Koristi podrazumevane maske na slojevima popune
+
+# Smart Filter editors
+	Blending Options ({filter})	Opcije stapanja ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Sakrij efekte i pametne filtere sloja  ({key}-klik: svi slojevi)
+	Opacity must be between 0% and 100%.	Neprozirnost mora biti između 0% i 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Rastapanje je približno: mešanje se vrši bez diteringa programa Photoshop.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Prikaži efekte i pametne filtere sloja  ({key}-klik: svi slojevi)
+	The document or Smart Filter changed. Reopen its dialog.	Dokument ili pametni filter se promenio. Ponovo otvorite njegov dijalog.
+	Wait for the current job to finish.	Sačekajte da se trenutni posao završi.
 	Accept and Go to Conflict	Prihvati i idi na sukob
 	Changes undone.	Izmene su poništene.
 	Choose a new shortcut for this command, or leave it without one.	Izaberite novu prečicu za ovu komandu ili je ostavite bez prečice.
@@ -4344,6 +4372,10 @@ shape	Appearance	Izgled
 # DDS Options (#1327)
 	DDS Options	DDS opcije
 	Generate Mipmaps	Generiši mipmape
+
+# Color Table (.act) dialog
+	There is no color table to save.	Нема табеле боја за чување.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Сачувана је {n} боја у {file}|Сачуване су {n} боје у {file}|Сачувано је {n} боја у {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU adapter

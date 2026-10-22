@@ -283,8 +283,11 @@ pub fn stack_image(file_name: &str, bytes: &[u8], fmt: PixelFormat, mode: photoc
 
 // ---------- rendering ----------
 
-/// `top` blended over `base` with `mode` at `opacity` (a smart filter's blending options).
+/// Mix a filter's result with its input, without stacking the same pixel coverage twice.
 fn blend_surfaces(base: &Surface, top: &Surface, mode: BlendMode, opacity: f32) -> Surface {
+    if opacity <= 0.0 {
+        return base.clone();
+    }
     let fmt = base.format();
     let area = base.content_bounds().union(&top.content_bounds());
     let mut out = base.clone();
@@ -293,9 +296,38 @@ fn blend_surfaces(base: &Surface, top: &Surface, mode: BlendMode, opacity: f32) 
     }
     let n = fmt.channels();
     let (b, t) = (base.read_region(area), top.read_region(area));
+    // Alpha-preserving filters edit the same coverage. A non-Normal filter that
+    // changes coverage (e.g. blur) must also retain input-only pixels and admit
+    // filtered-only pixels, as Photoshop's Smart Filter blend oracles require.
+    // Classify the whole result so unchanged pixels do not switch blend rules
+    // independently at the edge of a blur.
+    let composite_coverage = mode != BlendMode::Normal && fmt.alpha && b.chunks_exact(n).zip(t.chunks_exact(n)).any(|(bp, tp)| bp.last() != tp.last());
     let mut o = vec![0.0f32; b.len()];
     for ((bp, tp), op) in b.chunks_exact(n).zip(t.chunks_exact(n)).zip(o.chunks_exact_mut(n)) {
-        let rgba = photocraft_color::blend::composite(mode, photocraft_raster::to_rgba(&fmt, bp), photocraft_raster::to_rgba(&fmt, tp), opacity);
+        let b = photocraft_raster::to_rgba(&fmt, bp);
+        let t = photocraft_raster::to_rgba(&fmt, tp);
+        if composite_coverage {
+            let rgba = photocraft_color::blend::composite(mode, b, t, opacity);
+            photocraft_raster::from_rgba_into(&fmt, rgba, op);
+            continue;
+        }
+        let cb = [b[0], b[1], b[2]];
+        let ct = [t[0], t[1], t[2]];
+        let color = if fmt.sample == photocraft_color::SampleType::F32 {
+            photocraft_color::blend::blend_rgb_hdr(mode, cb, ct)
+        } else {
+            photocraft_color::blend::blend_rgb(mode, cb, ct)
+        };
+        // A filter edits this surface, rather than adding a second source-over layer. Mix
+        // premultiplied results so alpha-preserving filters keep coverage at every opacity,
+        // while Normal-mode filters that change coverage interpolate it too.
+        let a = b[3] + (t[3] - b[3]) * opacity;
+        let mut rgba = [0.0, 0.0, 0.0, a];
+        if a > 0.0 {
+            for c in 0..3 {
+                rgba[c] = (cb[c] * b[3] * (1.0 - opacity) + color[c] * t[3] * opacity) / a;
+            }
+        }
         photocraft_raster::from_rgba_into(&fmt, rgba, op);
     }
     out.write_region(area, &o);
@@ -314,12 +346,27 @@ pub fn apply_smart_filters(placed: &Surface, sm: &SmartObject, canvas: Rect) -> 
     // Edge pixels repeat at the canvas ∪ placed-content edge, as for layer filters.
     let extent = canvas.union(&placed.content_bounds());
     for f in sm.smart_filters.iter().filter(|f| f.visible) {
-        cur = apply_smart_filter(f, &cur, canvas, extent)?;
+        cur = apply_smart_filter(f, &cur, filter_bounds(f, placed, canvas), extent)?;
     }
     Ok(match sm.filter_mask.as_ref().filter(|m| m.enabled) {
         Some(m) => photocraft_compose::filter_mask::mix(placed, &cur, m),
         None => cur,
     })
+}
+
+/// The reference bounds of smart filter `f`. Render filters work within the smart object, as
+/// Photoshop's do: Lens Flare's centre is a fraction of the object, and Clouds and Fibers fill it
+/// and size their pattern by it. The object is its placed content's bounds (which leaves out
+/// fully transparent edges of the source); the other filters use the canvas, as on a layer.
+fn filter_bounds(f: &SmartFilter, placed: &Surface, canvas: Rect) -> Rect {
+    match placed.content_bounds() {
+        b if renders_in_object(f) && !b.is_empty() => b,
+        _ => canvas,
+    }
+}
+
+fn renders_in_object(f: &SmartFilter) -> bool {
+    matches!(f.command.as_str(), "filter.render.clouds" | "filter.render.differenceClouds" | "filter.render.fibers" | "filter.render.lensFlare")
 }
 
 /// One visible smart filter over `cur`, blended with its blend mode and opacity. `Err` when the
@@ -424,10 +471,18 @@ fn render_in(doc: &Document, sm: &SmartObject, ctx: &JobCtx) -> Result<Option<Su
         None => (0, placed()?),
     };
     let n = filters.len() as f32;
+    // The object's bounds, found once: the placed stage may have been evicted from the cache, and
+    // placing it again for every render filter would decode the source each time.
+    let mut object_bounds: Option<Rect> = None;
     for (i, (f, key)) in filters.iter().zip(&keys).enumerate().skip(done) {
         ctx.check()?;
         ctx.progress(i as f32 / n, "");
-        cur = Stage { surface: apply_smart_filter(f, &cur.surface, canvas, cur.extent)?, extent: cur.extent };
+        let bounds = match object_bounds {
+            _ if !renders_in_object(f) => canvas,
+            Some(b) => b,
+            None => *object_bounds.insert(filter_bounds(f, &placed()?.surface, canvas)),
+        };
+        cur = Stage { surface: apply_smart_filter(f, &cur.surface, bounds, cur.extent)?, extent: cur.extent };
         stack_cache::put(*key, &cur);
     }
     ctx.progress(1.0, "");
@@ -1018,10 +1073,40 @@ fn set_filter_visible(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The Displace filter, whose map a smart filter keeps embedded in its params.
+const DISPLACE: &str = "filter.distort.displace";
+
 fn set_filter_params(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "layer.smartFilter.setParams";
     let new = p.get("params").cloned().ok_or_else(|| bad(CMD, "pass `params` (merged into the filter's parameters)"))?;
     let authorize = s.authorize;
+    // A Displace given another open document as its map embeds that one in place of the old
+    // (#7423). It is read here, before the edit, from the session; the request is authorized
+    // first, as the merged params are below. A new `mapPath` stays a path (read next to the
+    // document on each re-render) and only drops the old embedded map; an empty one, or a
+    // negative `mapDocument` (the dialog's "None"), names no map.
+    let new_map_asked = crate::filters_ext::map_document(&new).is_some();
+    let new_path = crate::filters_ext::map_path(&new).is_some();
+    let displace = {
+        let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
+        let sm = smart(doc, layer_param(s, p)?)?;
+        sm.smart_filters.get(filter_index(CMD, p, sm)?).is_some_and(|f| f.command == DISPLACE)
+    };
+    let new_map = if displace && new_map_asked {
+        // The old embedded map, if the edit passed it back, gives way to the one named.
+        let request = crate::filters_ext::displace_request(&new);
+        if let Some(gate) = authorize {
+            gate(DISPLACE, &request)?;
+        }
+        let mut fp = crate::filters::params_for(DISPLACE, &request).ok_or_else(|| bad(CMD, "unreadable Displace settings"))?;
+        crate::filters_ext::resolve(s, &mut fp, &request)?;
+        match fp {
+            photocraft_algo::FilterParams::Displace { map, .. } => map,
+            _ => None,
+        }
+    } else {
+        None
+    };
     edit_filters(s, p, "Edit Smart Filter", |sm| {
         let i = filter_index(CMD, p, sm)?;
         let f = &mut sm.smart_filters[i];
@@ -1031,6 +1116,14 @@ fn set_filter_params(s: &mut Session, p: &Value) -> Result<Value> {
         match (&mut f.params, new) {
             (Value::Object(old), Value::Object(n)) => old.extend(n),
             (slot, n) => *slot = n,
+        }
+        if f.command == DISPLACE {
+            if let Some(map) = &new_map {
+                f.params = photocraft_io::smart_map::displace_embed_map(&f.params, map)
+                    .ok_or_else(|| bad(CMD, "the displacement map is too large to keep in a Smart Object's filter"))?;
+            } else if new_path {
+                f.params = photocraft_io::smart_map::displace_without_map(&f.params);
+            }
         }
         // Authorize the underlying command with the complete merged params, including paths
         // already stored in the document, before committing the edit or starting a worker.

@@ -234,6 +234,7 @@
 	Inner Glow…	Внутрішнє світіння…
 	Bevel & Emboss…	Фаска та рельєф…
 	Use Global Light	Використовувати глобальне освітлення
+	Overprint	Накладання
 	Satin…	Атлас…
 	Color Overlay…	Накладання кольору…
 	Gradient Overlay…	Накладання градієнта…
@@ -3743,6 +3744,32 @@ cameraData	Lens	Об'єктив
 	Mirror	Віддзеркалення
 	Output Settings	Параметри виводу
 	Output To	Вивести в
+
+	Animation Options	Параметри анімації
+	Entire Document	Увесь документ
+	Filter Options	Параметри фільтрів
+	Layer Bounds	Межі шару
+	Layers Panel Options	Параметри панелі «Шари»
+	New Artboard…	Нова монтажна область…
+	New Group…	Нова група…
+	Prevent Auto-Nesting	Заборонити автоматичне вкладення
+	Show Layers	Показати шари
+	Thumbnail Contents	Вміст мініатюр
+	Thumbnail Size	Розмір мініатюр
+	Use Default Masks on Fill Layers	Використовувати типові маски для шарів заливки
+	Expand New Effects	Розгортати нові ефекти
+	Add “copy” to Copied Layers and Groups	Додавати «копія» до скопійованих шарів і груп
+	Preview on canvas when reordering layers	Попередній перегляд на полотні під час зміни порядку шарів
+	Show layer mask badges	Показувати позначки масок шарів
+
+# Smart Filter editors
+	Blending Options ({filter})	Параметри накладання ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	Приховати ефекти шару та смарт-фільтри  ({key}-клік: усі шари)
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	Показати ефекти шару та смарт-фільтри  ({key}-клік: усі шари)
+	Wait for the current job to finish.	Дочекайтеся завершення поточного завдання.
+	The document or Smart Filter changed. Reopen its dialog.	Документ або смарт-фільтр змінився. Відкрийте його діалог знову.
+	Opacity must be between 0% and 100%.	Непрозорість має бути від 0% до 100%.
+	Dissolve is approximated: it blends without Photoshop's dither.	Розчинення наближене: змішування без дизерингу Photoshop.
 	Loading fonts…	Завантаження шрифтів…
 	Response curve	Крива відгуку
 	Simulate Pressure	Імітувати натиск
@@ -3983,6 +4010,10 @@ curves	Smooth	Згладити
 	DDS Options	Параметри DDS
 	Compression	Стиснення
 	Generate Mipmaps	Створити MIP-карти
+
+# Color Table (.act) dialog
+	There is no color table to save.	Немає таблиці кольорів для збереження.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	Збережено {n} колір у {file}|Збережено {n} кольори у {file}|Збережено {n} кольорів у {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	Адаптер GPU

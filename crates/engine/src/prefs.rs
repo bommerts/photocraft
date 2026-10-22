@@ -514,11 +514,14 @@ impl Default for Export {
     }
 }
 
+/// [`Performance::memory_usage_mb`]'s default.
+pub const DEFAULT_MEMORY_USAGE_MB: u32 = 8192;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Performance {
     /// Memory PhotoCraft may use, in MB: bounds each document's pixels plus its History (the
-    /// oldest states are dropped beyond it).
+    /// oldest states are dropped beyond it), and the result of one transform.
     pub memory_usage_mb: u32,
     /// Undo steps kept per document (History panel states).
     pub history_states: u32,
@@ -573,9 +576,10 @@ impl Performance {
 }
 
 impl Default for Performance {
+    /// What a new install starts with, [`DEFAULT_MEMORY_USAGE_MB`] of Memory Usage among it.
     fn default() -> Self {
         Self {
-            memory_usage_mb: 8192,
+            memory_usage_mb: DEFAULT_MEMORY_USAGE_MB,
             history_states: 50,
             cache_levels: 4,
             cache_tile_size: 8192,
@@ -1487,7 +1491,15 @@ pub fn normalize_shortcut(s: &str) -> Option<String> {
     Some(s)
 }
 
+/// Key names spelled with more than one capital (egui's `Key::name`): Title case would turn
+/// `PageUp` into `Pageup`, which no key matches, so a binding saved that way never fired (#6827).
+const MULTI_WORD_KEYS: [&str; 8] =
+    ["PageUp", "PageDown", "OpenBracket", "CloseBracket", "OpenCurlyBracket", "CloseCurlyBracket", "BrowserBack", "IntlBackslash"];
+
 fn capitalize(s: &str) -> String {
+    if let Some(k) = MULTI_WORD_KEYS.iter().find(|k| k.eq_ignore_ascii_case(s)) {
+        return (*k).to_string();
+    }
     let mut c = s.chars();
     match c.next() {
         Some(f) if f.is_ascii_alphabetic() => {
@@ -1519,7 +1531,8 @@ pub const TEMPORARY_TOOLS: &[(&str, &str, &str)] = &[
 /// Photoshop's second default keys (#3665): (command, key). Each command keeps its main key
 /// (the one its menu shows) and answers these as well, as in Photoshop's default set: the
 /// legacy function keys F2 Cut, F3 Copy, F4 Paste and Shift+F7 Inverse; Shift+Backspace
-/// (Shift+Delete on a Mac) for Fill; and ⌘+ beside ⌘= for Zoom In.
+/// (Shift+Delete on a Mac) for Fill; ⌘+ beside ⌘= for Zoom In; and off the Mac, Ctrl+F4 beside
+/// Ctrl+W for Close (Windows' close-document key; macOS keeps Ctrl+F4 for window focus).
 pub const ALTERNATE_SHORTCUTS: &[(&str, &str)] = &[
     ("edit.cut", "F2"),
     ("edit.copy", "F3"),
@@ -1527,6 +1540,8 @@ pub const ALTERNATE_SHORTCUTS: &[(&str, &str)] = &[
     ("edit.fill", "Shift+Backspace"),
     ("select.inverse", "Shift+F7"),
     ("view.zoomIn", "Cmd++"),
+    #[cfg(not(target_os = "macos"))]
+    ("file.close", "Cmd+F4"),
 ];
 
 /// A command's default alternate keys ([`ALTERNATE_SHORTCUTS`]).
@@ -1738,7 +1753,7 @@ impl Session {
     }
 
     /// Push engine-relevant preferences into live state: every document's history limit, the
-    /// layer-effect cache budget and the text engine's missing-glyph protection.
+    /// transform and layer-effect cache budgets and the text engine's missing-glyph protection.
     pub fn apply_prefs(&mut self) {
         let n = self.prefs().performance.history_states.max(1) as usize;
         let bytes = self.prefs().performance.history_budget_bytes();
@@ -1749,6 +1764,7 @@ impl Session {
             st.trim_history();
         }
         photocraft_compose::set_effect_cache_budget(budget << 20);
+        crate::transform_cmds::set_budget(u64::from(self.prefs().performance.memory_usage_mb) << 20);
         // Without waiting for the system font scan: this runs on the UI thread at launch.
         photocraft_text::set_shared_missing_glyph_protection(self.prefs().type_.missing_glyph_protection());
         crate::plugin_cmds::sync_prefs(self);

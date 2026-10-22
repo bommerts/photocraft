@@ -34,9 +34,14 @@ fn limits() -> Limits {
 /// A raw file's embedded JPEG preview, turned upright. Its own EXIF orientation wins when it
 /// has one; otherwise the raw's IFD0 orientation applies (TIFF-based raws record it there, and
 /// their previews are usually stored as the sensor reads out). Developed raws are oriented by
-/// `photocraft-raw` and carry no EXIF, so nothing is turned twice.
-fn upright_preview(raw: &[u8], jpeg: &[u8]) -> Result<Image, IoError> {
-    let img = codecs::decode_as_with(Format::Jpeg, jpeg, &codecs::DecodeOptions { keep_orientation: true, ..Default::default() })?;
+/// `photocraft-raw` and their EXIF carries no orientation, so nothing is turned twice.
+fn upright_preview(raw: &[u8], jpeg: &[u8], limits: &photocraft_raw::Limits) -> Result<Image, IoError> {
+    // Decode the embedded preview under the caller's limits, not the codec defaults: an
+    // embedded JPEG can declare far more decoded pixels than the raw development the caller
+    // authorized, so the preview fallback must honor the same policy.
+    let codec_limits =
+        codecs::Limits { max_width: limits.max_width, max_height: limits.max_height, max_pixels: limits.max_pixels, max_alloc: limits.max_alloc };
+    let img = codecs::decode_as_with(Format::Jpeg, jpeg, &codecs::DecodeOptions { keep_orientation: true, limits: codec_limits })?;
     let own = img.meta.exif.as_deref().map_or(1, codecs::exif_orientation);
     let o = if own != 1 { own } else { photocraft_raw::orientation(raw).unwrap_or_else(|| codecs::exif_orientation(raw)) };
     Ok(img.oriented(o)?)
@@ -111,7 +116,7 @@ pub fn import_raw_tuned(name: &str, bytes: &[u8], tuning: &RawTuning) -> Result<
         .map(|(k, v)| format!(", {k} {v:+.0}"))
         .collect::<String>();
     let summary = format!("developed in Camera Raw (exposure {:+.2} EV{tone}, {wb})", tuning.exposure);
-    Ok((developed_document(name, format, dev, &summary)?, wb_applied))
+    Ok((developed_document(name, bytes, format, dev, &summary)?, wb_applied))
 }
 
 /// The tone curve `bytes` develop with by default: the fitted look's for a file without colour
@@ -164,8 +169,11 @@ fn wb_gains(temperature: f32, tint: f32) -> [f64; 3] {
 }
 
 /// A developed raw as a 16-bit ProPhoto document, with a note saying how it was developed.
-fn developed_document(name: &str, format: &str, dev: photocraft_raw::Developed, summary: &str) -> Result<ImportResult, IoError> {
-    let img = Image::from_u16(dev.width, dev.height, ChannelLayout::Rgb, &dev.rgb)?;
+fn developed_document(name: &str, bytes: &[u8], format: &str, dev: photocraft_raw::Developed, summary: &str) -> Result<ImportResult, IoError> {
+    let mut img = Image::from_u16(dev.width, dev.height, ChannelLayout::Rgb, &dev.rgb)?;
+    // The raw's own EXIF (camera, lens, exposure, date), for File Info's Camera Data. It carries
+    // no orientation: the developed image is already upright.
+    img.meta.exif = codecs::raw_exif(bytes);
     let mut r = image_to_document(name, &img)?;
     r.document.icc_profile = Some(Arc::new(photocraft_cms::Builtin::ProPhotoCompat.profile().to_bytes().to_vec()));
     let camera = camera_name(dev.info.make.as_deref(), dev.info.model.as_deref());
@@ -213,7 +221,7 @@ pub fn fit_preview_look(raw: &[u8], sensor: &Sensor, opts: &DevelopOptions) -> R
         .min_by_key(|p| long(p))
         .or_else(|| previews.iter().max_by_key(|p| long(p)))
         .ok_or("no embedded JPEG preview")?;
-    let img = upright_preview(raw, pick.jpeg).map_err(|e| format!("the embedded preview does not decode: {e}"))?;
+    let img = upright_preview(raw, pick.jpeg, &opts.limits).map_err(|e| format!("the embedded preview does not decode: {e}"))?;
     if img.layout() != ChannelLayout::Rgb || img.sample_type() != SampleType::U8 {
         return Err("the embedded preview is not 8-bit RGB".into());
     }
@@ -253,11 +261,11 @@ pub fn import_raw_with(name: &str, bytes: &[u8], opts: &DevelopOptions) -> Resul
     match develop_fitted(bytes, opts) {
         Ok(dev) => {
             let summary = format!("{DEVELOPED_NOTE} ({} demosaic, as-shot white balance)", opts.demosaic.id());
-            developed_document(name, format, dev, &summary)
+            developed_document(name, bytes, format, dev, &summary)
         }
         Err(RawError::Unsupported(reason)) => match photocraft_raw::embedded_preview(bytes) {
             Some(p) => {
-                let img = upright_preview(bytes, p.jpeg)?;
+                let img = upright_preview(bytes, p.jpeg, &opts.limits)?;
                 let mut r = image_to_document(name, &img)?;
                 r.warnings.insert(
                     0,

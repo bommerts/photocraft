@@ -1616,6 +1616,7 @@ fontWeight	Thin	Hajszálvékony
 	Overlay	Átfedés
 	Overlay Color	Átfedés színe
 	Overlay Opacity	Átfedés átlátszatlansága
+	Overprint	Felülnyomás
 	Paint over hair or fur on the image; Alt paints the other mode	Fesd át a hajat vagy a szőrzetet a képen; Alt lenyomásával a másik módban festesz
 	Pass Through	Áteresztés
 	Pattern Overlay	Mintázatfedés
@@ -4151,6 +4152,32 @@ cameraRaw	Yellow	Sárga
 	Lines/Inch	Vonal/hüvelyk
 	Lines/Centimeter	Vonal/centiméter
 	Ellipse	Ellipszis
+
+# Layers panel options and Smart Filter editors
+	Add “copy” to Copied Layers and Groups	„másolat” hozzáadása a másolt rétegekhez és csoportokhoz
+	Animation Options	Animációs beállítások
+	Entire Document	Teljes dokumentum
+	Expand New Effects	Új effektusok kibontása
+	Filter Options	Szűrési beállítások
+	Layer Bounds	Réteghatárok
+	Layers Panel Options	Rétegek panel beállításai
+	New Artboard…	Új rajztábla…
+	New Group…	Új csoport…
+	Prevent Auto-Nesting	Automatikus beágyazás tiltása
+	Preview on canvas when reordering layers	Előnézet a vásznon a rétegek átrendezésekor
+	Show Layers	Rétegek megjelenítése
+	Show layer mask badges	Rétegmaszk-jelvények megjelenítése
+	Thumbnail Contents	Bélyegkép tartalma
+	Thumbnail Size	Bélyegképméret
+	Use Default Masks on Fill Layers	Alapértelmezett maszkok kitöltőrétegeken
+
+	Blending Options ({filter})	Keverési beállítások ({filter})
+	Hide the layer's effects and Smart Filters  ({key}-click: all layers)	A réteg effektusainak és intelligens szűrőinek elrejtése  ({key}+kattintás: minden réteg)
+	Opacity must be between 0% and 100%.	Az átlátszatlanságnak 0% és 100% között kell lennie.
+	Dissolve is approximated: it blends without Photoshop's dither.	A Szétszórás csak közelítés: a Photoshop raszterezése nélkül keveredik.
+	Show the layer's effects and Smart Filters  ({key}-click: all layers)	A réteg effektusainak és intelligens szűrőinek megjelenítése  ({key}+kattintás: minden réteg)
+	The document or Smart Filter changed. Reopen its dialog.	A dokumentum vagy az intelligens szűrő megváltozott. Nyisd meg újra a párbeszédablakát.
+	Wait for the current job to finish.	Várd meg, amíg az aktuális feladat befejeződik.
 	Accept and Go to Conflict	Elfogadás és ugrás az ütközéshez
 	Changes undone.	Változások visszavonva.
 	Choose a new shortcut for this command, or leave it without one.	Válasszon új billentyűparancsot ehhez a parancshoz, vagy hagyja nélküle.
@@ -4190,6 +4217,10 @@ cameraRaw	Yellow	Sárga
 # DDS Options (#1327)
 	DDS Options	DDS-beállítások
 	Generate Mipmaps	Mipmapek létrehozása
+
+# Color Table (.act) dialog
+	There is no color table to save.	Nincs menthető színtábla.
+@plural	Saved {n} color to {file}|Saved {n} colors to {file}	{n} szín mentve ide: {file}
 
 # Graphics Adapter preference (#1885)
 	GPU adapter	GPU-adapter
