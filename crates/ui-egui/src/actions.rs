@@ -95,12 +95,12 @@ pub(crate) fn assign_shortcut(app: &mut PhotocraftApp, name: &str, shortcut: &st
 /// Replay edits synchronously, with view steps handled by the shell in the same order.
 /// Engine steps keep the headless action semantics (no dialogs or background jobs).
 pub(crate) fn play(app: &mut PhotocraftApp, params: &Value) -> Result<Value, String> {
-    play_owned(app, params, None)
+    play_owned(app, params, None, &[])
 }
 
 /// `suspended` is the recording a paused part of the same call took (`RECORD`); it comes
 /// back, with that named call journaled, only when the whole call ends.
-fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>) -> Result<Value, String> {
+fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>, children: &[Value]) -> Result<Value, String> {
     let (action, from) = match actions_cmds::playback_plan(&app.session, params) {
         Ok(plan) => plan,
         Err(e) => {
@@ -124,7 +124,26 @@ fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>)
     let mut ran = 0u64;
     let mut failed = None;
     let mut paused = None;
+    let mut parent_from = None;
+    // Rebuild outer playback frames before resuming the innermost action. Keeping them
+    // on the engine stack preserves recursion checks until each caller finishes.
+    if let Some((child, rest)) = children.split_first() {
+        match play_owned(app, child, None, rest) {
+            Ok(value) => {
+                if let Some(error) = actions_cmds::nested_failure("actions.play", &value) {
+                    failed = Some(json!({"step": from.saturating_sub(1), "id": "actions.play", "error": error}));
+                } else if let Some(inner) = value.get("paused").filter(|p| p.is_object()) {
+                    paused = Some(inner.clone());
+                    parent_from = Some(from);
+                }
+            }
+            Err(error) => failed = Some(json!({"step": from.saturating_sub(1), "id": "actions.play", "error": error})),
+        }
+    }
     for (i, (id, p)) in action.enabled_steps().skip_while(|(i, _)| *i < from) {
+        if failed.is_some() || paused.is_some() {
+            break;
+        }
         if !actions_cmds::consume_playback_step(&mut app.session) {
             failed = Some(json!({"step": i, "id": id, "error": format!("action playback exceeded the {}-step limit", actions_cmds::MAX_PLAYBACK_STEPS)}));
             break;
@@ -182,8 +201,9 @@ fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>)
                     break;
                 }
                 if let Some(inner) = value.get("paused").filter(|p| p.is_object()) {
-                    // A called action paused for a dialog; it resumes alone when confirmed.
+                    // Keep this caller until the child and all its later dialogs complete.
                     paused = Some(inner.clone());
+                    parent_from = Some(i.saturating_add(1));
                     break;
                 }
                 ran += 1;
@@ -193,6 +213,11 @@ fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>)
                 break;
             }
         }
+    }
+    if let (Some(paused), Some(next)) = (paused.as_ref(), parent_from)
+        && let Err(error) = retain_parent(app, paused, &action.name, next)
+    {
+        failed = Some(json!({"step": next.saturating_sub(1), "id": "actions.play", "error": error}));
     }
     actions_cmds::finish_playback(&mut app.session, None, &action, from);
     match paused.as_ref().and_then(|p| p.get("dialog")).and_then(Value::as_u64).and_then(|d| app.ui.dialog_mut(d)) {
@@ -211,6 +236,19 @@ fn play_owned(app: &mut PhotocraftApp, params: &Value, suspended: Option<Value>)
         (None, Some(p)) => json!({"action": action.name, "ran": ran, "paused": p}),
         (None, None) => json!({"action": action.name, "ran": ran}),
     })
+}
+
+/// A child dialog carries callers from the innermost to the outermost action.
+/// Their prefixes have already run, so only the next-step positions are retained.
+fn retain_parent(app: &mut PhotocraftApp, paused: &Value, action: &str, from: usize) -> Result<(), String> {
+    let id = paused.get("dialog").and_then(Value::as_u64).ok_or("the paused action has no dialog")?;
+    let resume = app.ui.dialog_mut(id).and_then(|d| d.fields.get_mut(RESUME)).and_then(Value::as_object_mut).ok_or("the paused action has no continuation")?;
+    let parents = resume.entry(PARENTS).or_insert_with(|| json!([])).as_array_mut().ok_or("invalid action continuation parents")?;
+    if parents.len() >= 15 {
+        return Err("action nesting exceeds 16 levels".into());
+    }
+    parents.push(json!({"action": action, "from": from}));
+    Ok(())
 }
 
 /// Execute the actual menu command, not a synthetic keystroke. Fit is deferred
@@ -530,8 +568,9 @@ pub fn stop_message_confirm(app: &mut PhotocraftApp, fields: &serde_json::Map<St
     Ok(json!({"continued": allow}))
 }
 
-/// The key a paused playback leaves in its dialog's fields: `{action, from}`.
+/// The key a paused playback leaves in its dialog's fields: `{action, from, parents?}`.
 pub const RESUME: &str = "__resumeAction";
+const PARENTS: &str = "parents";
 
 /// The recording a paused call suspended, kept in its `RESUME` entry:
 /// `{index, into, action, from}` (`into` is the name of the action being recorded).
@@ -600,12 +639,23 @@ pub fn resume(app: &mut PhotocraftApp, fields: &serde_json::Map<String, Value>) 
         return Err(e.to_string());
     }
     let params = json!({"action": r.get("action").cloned().unwrap_or(Value::Null), "from": r.get("from").cloned().unwrap_or(Value::Null)});
-    match play_owned(app, &params, owner) {
+    let result = (|| {
+        let parents = r.get(PARENTS).map(|p| p.as_array().ok_or("invalid action continuation parents")).transpose()?;
+        if parents.is_some_and(|p| p.len() >= 16) {
+            return Err("action nesting exceeds 16 levels".into());
+        }
+        let mut frames: Vec<Value> = parents.into_iter().flatten().rev().cloned().collect();
+        frames.push(params);
+        let (outer, children) = frames.split_first().ok_or("the paused action has no continuation")?;
+        play_owned(app, outer, owner.clone(), children)
+    })();
+    match result {
         Ok(v) => {
             report_play(app, &v);
             Ok(())
         }
         Err(e) => {
+            restore_recording(app, owner.as_ref());
             let template = "Action playback failed: {error}";
             app.ui.status = crate::i18n::fmt(tl!(template), &[("error", &e)]);
             app.ui.status_error = true;
@@ -1874,6 +1924,133 @@ mod tests {
         let (bytes, _) = photocraft_engine::atn_cmds::export("Stops", &[&action], &[], false).unwrap();
         app.run("actions.load", json!({"data": photocraft_engine::paint::tile::b64_encode(&bytes)})).unwrap();
         app
+    }
+
+    fn nested_stop_app(allow: bool) -> PhotocraftApp {
+        let mut app = imported_stop_app(allow, true);
+        for (name, child) in [("Parent", "Stop Test"), ("Grandparent", "Parent")] {
+            app.session.actions.list.push(Action::new(
+                name,
+                vec![
+                    ("layer.new.layer".into(), json!({"name": format!("{name} prefix")})),
+                    ("actions.play".into(), json!({"action": child})),
+                    ("layer.new.layer".into(), json!({"name": format!("{name} suffix")})),
+                ],
+            ));
+        }
+        app
+    }
+
+    #[test]
+    fn nested_stop_continue_resumes_every_parent_and_records_only_the_outer_call() {
+        let mut app = nested_stop_app(true);
+        // A second pause in the parent must retain the outer continuation too.
+        let parent = app.session.actions.list.iter_mut().find(|a| a.name == "Parent").unwrap();
+        parent.steps.insert(2, (photocraft_engine::atn_cmds::STOP_MESSAGE.into(), json!({"message": "Parent pause", "allowContinue": true})));
+        parent.dialogs.insert(2);
+        app.run("actions.record", json!({"name": "Owner"})).unwrap();
+        let v = play(&mut app, &json!({"action": "Grandparent"})).unwrap();
+        let id = v["paused"]["dialog"].as_u64().unwrap();
+        crate::dialogs::confirm(&mut app, id).unwrap();
+        assert_eq!(suffixes(&app), 1, "the child suffix runs once");
+        assert_eq!(app.ui.dialogs.len(), 1, "the parent resumes into its own Stop");
+        assert!(app.session.actions.recording.is_none(), "recording stays suspended through both pauses");
+        let id = app.ui.dialogs[0].id;
+        assert_eq!(app.ui.dialogs[0].fields["message"], "Parent pause");
+        crate::dialogs::confirm(&mut app, id).unwrap();
+        assert!(app.ui.dialogs.is_empty());
+        let names: Vec<_> = app.session.active().unwrap().doc.walk().iter().map(|(_, _, l)| l.name.clone()).collect();
+        assert_eq!(names.iter().filter(|n| n.as_str() == "Parent suffix").count(), 1);
+        assert_eq!(names.iter().filter(|n| n.as_str() == "Grandparent suffix").count(), 1);
+        let edits: Vec<_> = app.session.journal.iter().filter(|(id, _)| id == "layer.new.layer").map(|(_, p)| p["name"].as_str().unwrap()).collect();
+        assert_eq!(edits, ["Grandparent prefix", "Parent prefix", "Suffix", "Parent suffix", "Grandparent suffix"]);
+        assert!(app.session.actions.recording.is_some());
+        app.run("actions.stop", json!({})).unwrap();
+        let owner = app.session.actions.list.iter().find(|a| a.name == "Owner").unwrap();
+        assert_eq!(owner.steps, vec![("actions.play".into(), json!({"action": "Grandparent"}))]);
+        assert_eq!(app.session.actions.playing, 0);
+        assert!(app.session.actions.playback_stack.is_empty());
+    }
+
+    #[test]
+    fn nested_stop_cancel_hard_stop_and_child_failure_do_not_run_parent_suffixes() {
+        for (allow, confirm, fail) in [(true, false, false), (false, true, false), (true, true, true)] {
+            let mut app = nested_stop_app(allow);
+            if fail {
+                app.session.actions.list[0].steps[2] = ("layer.select".into(), json!({"layer": 999999}));
+            }
+            app.run("actions.record", json!({"name": "Owner"})).unwrap();
+            let v = play(&mut app, &json!({"action": "Grandparent"})).unwrap();
+            let id = v["paused"]["dialog"].as_u64().unwrap();
+            if confirm {
+                crate::dialogs::confirm(&mut app, id).unwrap();
+            } else {
+                crate::dialogs::cancel(&mut app, id).unwrap();
+            }
+            let doc = &app.session.active().unwrap().doc;
+            assert!(!doc.walk().iter().any(|(_, _, l)| l.name.ends_with("suffix")));
+            assert_eq!(suffixes(&app), 0);
+            assert!(app.ui.dialogs.is_empty());
+            assert_eq!(app.ui.status_error, fail);
+            app.run("actions.stop", json!({})).unwrap();
+            assert_eq!(app.session.actions.list.last().unwrap().steps, vec![("actions.play".into(), json!({"action": "Grandparent"}))]);
+            assert_eq!(app.session.actions.playing, 0);
+            assert!(app.session.actions.playback_stack.is_empty());
+        }
+    }
+
+    #[test]
+    fn nested_stop_resume_keeps_ancestor_recursion_checks() {
+        let mut app = nested_stop_app(true);
+        app.session.actions.list[0].steps[2] = ("actions.play".into(), json!({"action": "Grandparent"}));
+        let v = play(&mut app, &json!({"action": "Grandparent"})).unwrap();
+        let id = v["paused"]["dialog"].as_u64().unwrap();
+        crate::dialogs::confirm(&mut app, id).unwrap();
+        assert!(app.ui.dialogs.is_empty(), "a resumed child must still reject calls into its paused ancestors");
+        assert!(app.ui.status_error);
+        assert!(app.ui.status.contains("recursive"), "{}", app.ui.status);
+        assert_eq!(
+            app.session.journal.iter().filter(|(id, p)| id == "layer.new.layer" && p["name"] == "Grandparent prefix").count(),
+            1,
+            "no ancestor prefix is replayed before rejecting recursion"
+        );
+        assert_eq!(app.session.actions.playing, 0);
+        assert!(app.session.actions.playback_stack.is_empty());
+    }
+
+    #[test]
+    fn nested_stop_invalid_continuation_restores_recording_without_running_suffixes() {
+        for parents in [json!("invalid"), json!(vec![json!({"action": "Parent", "from": 2}); 16])] {
+            let mut app = nested_stop_app(true);
+            app.run("actions.record", json!({"name": "Owner"})).unwrap();
+            let v = play(&mut app, &json!({"action": "Grandparent"})).unwrap();
+            let id = v["paused"]["dialog"].as_u64().unwrap();
+            app.ui.dialog_mut(id).unwrap().fields.get_mut(RESUME).unwrap()[PARENTS] = parents;
+            assert!(crate::dialogs::confirm(&mut app, id).is_err());
+            assert_eq!(suffixes(&app), 0);
+            app.run("actions.stop", json!({})).unwrap();
+            assert_eq!(app.session.actions.list.last().unwrap().steps, vec![("actions.play".into(), json!({"action": "Grandparent"}))]);
+            assert_eq!(app.session.actions.playing, 0);
+            assert!(app.session.actions.playback_stack.is_empty());
+        }
+    }
+
+    #[test]
+    fn nested_stop_ordinary_dialog_waits_for_worker_and_resumes_parent_only_on_success() {
+        for locked in [false, true] {
+            let mut app = nested_stop_app(true);
+            app.background_jobs = true;
+            app.session.actions.list[0].steps[0].1["locks"] = json!({"pixels": locked});
+            app.session.actions.list[0].steps[1] = ("filter.blur.gaussianBlur".into(), json!({"radius": 1.5}));
+            let v = play(&mut app, &json!({"action": "Grandparent"})).unwrap();
+            let id = v["paused"]["dialog"].as_u64().unwrap();
+            let result = crate::dialogs::confirm(&mut app, id);
+            assert_eq!(result.is_ok(), !locked, "{result:?}");
+            assert_eq!(suffixes(&app), usize::from(!locked));
+            assert_eq!(app.session.active().unwrap().doc.walk().iter().any(|(_, _, l)| l.name == "Grandparent suffix"), !locked);
+            assert_eq!(app.session.actions.playing, 0);
+            assert!(app.session.actions.playback_stack.is_empty());
+        }
     }
 
     #[test]
