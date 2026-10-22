@@ -80,6 +80,20 @@ fn rerender(doc: &mut Document) -> Result<usize, String> {
     Ok(n)
 }
 
+/// Re-rendering Photoshop's Screen/Motion Blur oracle matches its merged composite, so the result retains the input's coverage.
+#[test]
+fn screen_motion_blur_retains_input_coverage() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/photoshop/smart-filters/sf-blend-screen-100.psd");
+    let bytes = std::fs::read(&path).expect("Screen/Motion Blur oracle missing: run cargo xtask corpus --all");
+    let file = PsdFile::from_bytes(&bytes).expect("parse Screen/Motion Blur oracle");
+    let mut doc = photocraft_io::import("sf-blend-screen-100.psd", &bytes).expect("import Screen/Motion Blur oracle").document;
+    assert!(rerender(&mut doc).expect("re-render Screen/Motion Blur oracle") > 0);
+    let merged = photocraft_io::merged_composite(&file).expect("Photoshop merged composite");
+    let (error, bad) = max_diff(&photocraft_compose::flatten(&doc).px, &merged);
+    assert!(error <= PASS_TOL, "Screen/Motion Blur error {error}, {bad}% pixels exceed 2/255");
+}
+
+/// Re-render every Photoshop oracle in the corpus with PhotoCraft's filters and compare it with Photoshop's own merged composite.
 #[test]
 fn photoshop_oracles_rerendered() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/photoshop");

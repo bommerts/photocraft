@@ -97,6 +97,9 @@ fn level(file: &[u8], i: u32) -> Image {
     b[12..16].copy_from_slice(&(lh as u32).to_le_bytes());
     b[16..20].copy_from_slice(&(lw as u32).to_le_bytes());
     b[28..32].copy_from_slice(&1u32.to_le_bytes());
+    // The pitch field is a row stride for uncompressed textures and the level size for BC.
+    let pitch = if le32(file, 80) & DDPF_FOURCC != 0 { level_bytes(file, lw, lh) } else { lw * le32(file, 88) as usize / 8 };
+    b[20..24].copy_from_slice(&(pitch as u32).to_le_bytes());
     b.extend(&file[start..start + level_bytes(file, lw, lh)]);
     decode(&b).unwrap()
 }

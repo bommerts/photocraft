@@ -242,6 +242,48 @@ fn jpeg_444_beats_420_on_chroma_detail() {
     assert!(psnr(&img, &decode(&a).unwrap()) > psnr(&img, &decode(&b).unwrap()));
 }
 
+/// JPEG Options › Format Options: each scan layout decodes back to the same image, Progressive
+/// writes a progressive frame (SOF2), and Baseline Optimized fits its Huffman tables (smaller at
+/// 4:4:4; at 4:2:0 it keeps the standard tables, see `JpegFormat::Optimized`).
+#[test]
+fn jpeg_format_options_round_trip() {
+    let img = synth(64, 48, ChannelLayout::Rgb, SampleType::U8, 3, 0.5);
+    let sof = |b: &[u8], m: u8| b.windows(2).any(|w| w == [0xFF, m]);
+    for subsampled in [false, true] {
+        let enc = |f| {
+            encode(&img, Format::Jpeg, &EncodeOptions { jpeg_format: f, jpeg_chroma_subsampling: subsampled, jpeg_quality: 90, ..Default::default() }).unwrap()
+        };
+        let (base, opt, prog) = (enc(JpegFormat::Baseline), enc(JpegFormat::Optimized), enc(JpegFormat::Progressive));
+        // The scan layout only changes how the same quantized coefficients are stored, so every
+        // format decodes as faithfully as Baseline.
+        let reference = psnr(&img, &decode(&base).unwrap());
+        for (name, b) in [("optimized", &opt), ("progressive", &prog)] {
+            let back = decode(b).unwrap();
+            assert_eq!(back.dimensions(), img.dimensions(), "{name}");
+            let p = psnr(&img, &back);
+            assert!((p - reference).abs() < 0.5, "{name}, subsampled {subsampled}: {p} vs baseline {reference}");
+        }
+        assert!(sof(&base, 0xC0) && !sof(&base, 0xC2));
+        assert!(sof(&prog, 0xC2), "progressive frame");
+        if subsampled {
+            assert_eq!(opt, base, "4:2:0 keeps the standard tables");
+        } else {
+            assert!(opt.len() < base.len(), "fitted tables are smaller: {} vs {}", opt.len(), base.len());
+        }
+    }
+    // Gray is 4:4:4 too, so Baseline Optimized shrinks it.
+    let gray = synth(64, 48, ChannelLayout::Gray, SampleType::U8, 3, 0.5);
+    let enc = |f| encode(&gray, Format::Jpeg, &EncodeOptions { jpeg_format: f, ..Default::default() }).unwrap();
+    let (base, opt) = (enc(JpegFormat::Baseline), enc(JpegFormat::Optimized));
+    assert!(opt.len() < base.len(), "gray: {} vs {}", opt.len(), base.len());
+    assert!((psnr(&gray, &decode(&opt).unwrap()) - psnr(&gray, &decode(&base).unwrap())).abs() < 0.5);
+    assert_eq!(JpegFormat::parse("progressive"), Some(JpegFormat::Progressive));
+    assert_eq!(JpegFormat::parse(JpegFormat::Optimized.name()), Some(JpegFormat::Optimized));
+    for bad in ["Progressive", "", "standard"] {
+        assert_eq!(JpegFormat::parse(bad), None, "{bad}");
+    }
+}
+
 #[test]
 fn webp_lossy_request_is_a_lossy_file() {
     let img = test_image(ChannelLayout::Rgb, SampleType::U8);

@@ -82,8 +82,8 @@ use photocraft_psd::{PsdError, PsdFile};
 
 pub use adjust_map::ADJUSTMENT_KEYS;
 pub use flat::{
-    DEFAULT_LOSSY_WEBP_QUALITY, apply_file_encoding, document_to_image, file_encoding, import_gif_frames, import_tiff_page, tga_alpha_channel_to_transparency,
-    tga_default_bits,
+    DEFAULT_LOSSY_WEBP_QUALITY, apply_file_encoding, document_to_image, file_encoding, import_gif_frames, import_tiff_page, import_webp_frames,
+    tga_alpha_channel_to_transparency, tga_default_bits,
 };
 pub use psd_export::{PsdExportOptions, document_to_psd, document_to_psd_with};
 pub use psd_import::{psd_to_document, psd_to_document_with};
@@ -318,8 +318,33 @@ pub fn import_with_svg_group_depth_and_interrupt(
     max_group_depth: usize,
     ctl: &photocraft_raster::Interrupt,
 ) -> Result<ImportResult, IoError> {
+    import_with_options_and_interrupt(name, bytes, &ImportOptions { max_group_depth, ..Default::default() }, ctl)
+}
+
+/// The user's settings that shape an import.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImportOptions {
+    /// SVG groups nested deeper than this are rasterised.
+    pub max_group_depth: usize,
+    /// The demosaic method camera raws are developed with.
+    pub demosaic: raw::Demosaic,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        ImportOptions { max_group_depth: photocraft_doc::MAX_GROUP_DEPTH, demosaic: raw::Demosaic::default() }
+    }
+}
+
+/// [`import`] with the user's import settings.
+pub fn import_with_options(name: &str, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
+    import_with_options_and_interrupt(name, bytes, opts, &photocraft_raster::Interrupt::NONE)
+}
+
+/// [`import_with`] with the user's import settings.
+pub fn import_with_options_and_interrupt(name: &str, bytes: &[u8], opts: &ImportOptions, ctl: &photocraft_raster::Interrupt) -> Result<ImportResult, IoError> {
     ctl.check().map_err(|_| IoError::Cancelled)?;
-    let r = import_stages(name, bytes, ctl, max_group_depth)?;
+    let r = import_stages(name, bytes, ctl, opts)?;
     ctl.check().map_err(|_| IoError::Cancelled)?;
     ctl.progress(1.0);
     Ok(r)
@@ -343,7 +368,7 @@ fn import_psd(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt) -> R
     Ok(ImportResult { document, warnings, source_read_only: false, preview_only: false })
 }
 
-fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, max_group_depth: usize) -> Result<ImportResult, IoError> {
+fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, opts: &ImportOptions) -> Result<ImportResult, IoError> {
     // A declared native extension must reach its loader so malformed bundles retain format errors.
     if has_extension(name, photocraft_format::EXTENSION) || photocraft_format::is_pcraft(bytes) {
         let document = photocraft_format::load_from_bytes(bytes)?;
@@ -377,10 +402,10 @@ fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, m
         return pdn::import(name, bytes, ctl);
     }
     if raw::is_raw(bytes) {
-        return raw::import_raw(name, bytes);
+        return raw::import_raw_demosaic(name, bytes, opts.demosaic);
     }
     if is_svg_input(name, bytes) {
-        return svg::import_svg_with_group_depth(name, bytes, max_group_depth);
+        return svg::import_svg_with_group_depth(name, bytes, opts.max_group_depth);
     }
     // A `.psd`/`.psb`/`.psdt` with no raster signature keeps the PSD error instead of
     // `codec: unrecognized image format` (#5258). Magic already returned above.
