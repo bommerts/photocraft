@@ -1384,6 +1384,7 @@ fn events_photoshop_only_runs_by_name_export_by_name_and_old_codes_still_import(
         ("filter.blur.surfaceBlur", json!({"radius": 5, "threshold": 15}), "surfaceBlur", "SrfB"),
         ("layer.flattenImage", json!({}), "FltI", "Fltn"),
         ("image.adjustments.blackWhite", bw, "blackAndWhite", "BlnW"),
+        ("image.adjustments.vibrance", json!({"vibrance": 47, "saturation": -19}), "vibrance", "Vbrn"),
     ];
     for (id, params, written, legacy) in &cases {
         let exported = export_item(id, params, "S").unwrap_or_else(|| panic!("{id} does not export"));
@@ -1733,6 +1734,41 @@ fn function_keys_keep_shift_and_command() {
         assert_eq!(super::parse_function_key(bad), None, "{bad}");
     }
     assert_eq!(super::function_key_name(7, false, false), "F7");
+}
+
+/// Photoshop executes Vibrance by its string event name; the descriptor stays unchanged (#8383).
+#[test]
+fn vibrance_named_and_legacy_actions_reexport_and_play_at_both_depths() {
+    let descriptor = desc("Vbrn").with("vibrance", long(47.0)).with("Strt", long(-19.0));
+    let params = json!({"vibrance": 47, "saturation": -19});
+    for depth in [8, 16] {
+        for event in ["vibrance", "Vbrn"] {
+            let mut s = Session::new();
+            s.execute("file.new", json!({"width": 4, "height": 3, "depth": depth})).unwrap();
+            s.execute("edit.fill", json!({"contents": "color", "color": "#6594c2"})).unwrap();
+            let data = set_of("Vibrance", vec![("Adjust", vec![item(event, "Vibrance", Some(descriptor.clone()))])]);
+            let loaded = s.execute("actions.load", json!({"data": data})).unwrap();
+            assert_eq!(loaded["unsupported"], json!([]), "{depth}: {event}");
+            assert_eq!(s.actions.list[0].steps, [("image.adjustments.vibrance".into(), params.clone())]);
+            let saved = s.execute("actions.save", json!({"set": "Vibrance"})).unwrap();
+            let file = atn::parse(&photocraft_paint::tile::b64_decode(saved["data"].as_str().unwrap()).unwrap()).unwrap();
+            let exported = &file.actions[0].items[0];
+            assert_eq!(exported.event, AtnEvent::Name("vibrance".into()), "{depth}: {event}");
+            assert_eq!(exported.descriptor.as_ref(), Some(&descriptor), "only the event identity changes");
+            let played = s.execute("actions.play", json!({"action": "Adjust"})).unwrap();
+            assert_eq!(played["ran"], 1, "{played}");
+            assert!(played.get("failed").is_none(), "{played}");
+            let mut direct = Session::new();
+            direct.execute("file.new", json!({"width": 4, "height": 3, "depth": depth})).unwrap();
+            direct.execute("edit.fill", json!({"contents": "color", "color": "#6594c2"})).unwrap();
+            direct.execute("image.adjustments.vibrance", params.clone()).unwrap();
+            let actual = s.active().unwrap().doc.layers[0].surface().unwrap();
+            let expected = direct.active().unwrap().doc.layers[0].surface().unwrap();
+            for channel in 0..4 {
+                assert_eq!(actual.sample_channel(1, 1, channel), expected.sample_channel(1, 1, channel), "{depth}: {event}, channel {channel}");
+            }
+        }
+    }
 }
 
 /// A param a PhotoCraft step leaves out exports as PhotoCraft's default wherever Photoshop plays
