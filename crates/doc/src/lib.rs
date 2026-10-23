@@ -392,6 +392,9 @@ pub struct TextLayer {
     /// Exact generated copy label, while the name still follows the text. Never inferred from
     /// a "copy" suffix: a user can deliberately choose the same spelling for a custom label.
     pub auto_name: Option<String>,
+    /// An explicit name, even when equal to the text-derived label. False retains the legacy
+    /// name-equality inference for imported layers and older native documents.
+    pub custom_name: bool,
     pub font_family: String,
     pub size_pt: f32,
     pub color: Color,
@@ -419,6 +422,7 @@ impl Default for TextLayer {
         Self {
             text: String::new(),
             auto_name: None,
+            custom_name: false,
             font_family: String::new(),
             size_pt: 12.0,
             color: Color::BLACK,

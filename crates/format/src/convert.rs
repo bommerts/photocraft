@@ -133,6 +133,7 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
         LayerContent::Text(t) => ContentM::Text {
             text: t.text.clone(),
             auto_name: t.auto_name.clone(),
+            custom_name: t.custom_name,
             font_family: t.font_family.clone(),
             size_pt: t.size_pt,
             color: t.color,
@@ -456,6 +457,7 @@ impl Loader<'_> {
             ContentM::Text {
                 text,
                 auto_name,
+                custom_name,
                 font_family,
                 size_pt,
                 color,
@@ -471,6 +473,7 @@ impl Loader<'_> {
             } => LayerContent::Text(TextLayer {
                 text: text.clone(),
                 auto_name: auto_name.clone(),
+                custom_name: *custom_name,
                 font_family: font_family.clone(),
                 size_pt: *size_pt,
                 color: *color,

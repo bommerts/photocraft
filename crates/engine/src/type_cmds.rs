@@ -647,6 +647,9 @@ fn with_text_layer<R>(s: &mut Session, p: &Value, label: &str, f: impl FnOnce(&m
         // Only this layer's pixels changed: the canvas recomposites their old and new area
         // instead of the whole document (#124). Unknown old pixels mean a full refresh.
         let damage = before.zip(t.cache.as_ref().map(|c| c.tile_bounds())).map(|(a, b)| a.union(&b));
+        if rename.is_some() {
+            t.custom_name = true;
+        }
         let name = rename.or_else(|| (auto_named && t.text != old_text).then(|| layer_name(&t.text)));
         if let Some(n) = name {
             t.auto_name = None;
@@ -752,15 +755,16 @@ fn shown_style_params<'a>(t: &TextLayer, p: &'a Value) -> Result<std::borrow::Co
 }
 
 /// Whether a type layer still has the name it got from its text, so the name follows edits to
-/// the text. A layer renamed to anything else keeps its name (#483).
+/// the text. Explicit names take precedence; unmarked legacy layers still use equality (#483).
 pub(crate) fn is_auto_named(l: &Layer) -> bool {
-    matches!(&l.content, LayerContent::Text(t) if l.name == layer_name(&t.text) || t.auto_name.as_deref() == Some(l.name.as_str()))
+    matches!(&l.content, LayerContent::Text(t) if !t.custom_name && (l.name == layer_name(&t.text) || t.auto_name.as_deref() == Some(l.name.as_str())))
 }
 
 /// An explicit name must not inherit the generated copy's auto-name intent, even if identical.
 pub(crate) fn set_custom_name(l: &mut Layer, name: String) {
     if let LayerContent::Text(t) = &mut l.content {
         t.auto_name = None;
+        t.custom_name = true;
     }
     l.name = name;
 }
@@ -890,6 +894,7 @@ pub fn specs() -> Vec<CommandSpec> {
             journal: true,
             run: |s, p| {
                 let mut t = new_text_layer(s, p, "type.create")?;
+                t.custom_name = p.get("name").and_then(Value::as_str).is_some();
                 let name = p.get("name").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| layer_name(&t.text));
                 let id = s.edit("New Type Layer", |doc, active| {
                     refresh(doc, &mut t);
