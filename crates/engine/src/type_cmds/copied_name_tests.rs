@@ -100,6 +100,89 @@ fn layer_via_copy_still_unlocks_the_copy_not_the_source() {
     s.execute("type.edit", json!({"layer": copy, "text": "Unlocked"})).unwrap();
     assert_eq!(layer_name_of(&s, copy), "Unlocked");
 }
+// Explicit intent must win over equality with the text-derived name, not just copy labels.
+#[test]
+fn explicit_equal_name_at_creation_survives_edits_and_copy() {
+    for copy_command in ["layer.duplicate", "layer.new.layerViaCopy"] {
+        let mut s = session();
+        let id = s.execute("type.create", json!({"text": "Heading", "name": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+        let copy = s.execute(copy_command, json!({"layer": id})).unwrap()["layer"].as_u64().unwrap();
+        let name = layer_name_of(&s, copy);
+        s.execute("type.edit", json!({"layer": copy, "text": "Copy changed"})).unwrap();
+        assert_eq!(layer_name_of(&s, copy), name, "{copy_command}");
+        s.execute("type.edit", json!({"layer": id, "text": "Changed"})).unwrap();
+        assert_eq!(layer_name_of(&s, id), "Heading");
+    }
+}
+
+#[test]
+fn explicit_equal_name_rename_routes_survive_native_reopen() {
+    for command in ["layer.renameLayer", "layer.setProps", "type.edit"] {
+        for edit_command in ["type.edit", "type.pasteLoremIpsum"] {
+            let mut s = session();
+            let id = s.execute("type.create", json!({"text": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+            let copy = copied_text(&mut s, id);
+            s.execute("type.edit", json!({"layer": copy, "text": "Edited copy"})).unwrap();
+            s.execute(command, json!({"layer": copy, "name": "Edited copy"})).unwrap();
+            let bytes = photocraft_format::save_to_bytes(&s.active().unwrap().doc, &photocraft_format::SaveOptions::default()).unwrap();
+            s.active_mut().unwrap().doc = Arc::new(photocraft_format::load_from_bytes(&bytes).unwrap());
+            s.execute(edit_command, json!({"layer": copy, "text": "Changed", "at": 0})).unwrap();
+            assert_eq!(layer_name_of(&s, copy), "Edited copy", "{command}, {edit_command}");
+            let next = via_copy_text(&mut s, copy);
+            let name = layer_name_of(&s, next);
+            s.execute("type.edit", json!({"layer": next, "text": "Changed again"})).unwrap();
+            assert_eq!(layer_name_of(&s, next), name);
+        }
+    }
+}
+
+#[test]
+fn explicit_equal_name_duplicate_override_survives_reopen() {
+    let mut s = session();
+    let id = s.execute("type.create", json!({"text": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+    let copy = s.execute("layer.duplicate", json!({"layer": id, "name": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+    let bytes = photocraft_format::save_to_bytes(&s.active().unwrap().doc, &photocraft_format::SaveOptions::default()).unwrap();
+    s.active_mut().unwrap().doc = Arc::new(photocraft_format::load_from_bytes(&bytes).unwrap());
+    s.execute("type.edit", json!({"layer": copy, "text": "Changed"})).unwrap();
+    assert_eq!(layer_name_of(&s, copy), "Heading");
+}
+
+#[test]
+fn explicit_equal_name_history_restores_automatic_intent() {
+    for command in ["layer.renameLayer", "layer.setProps", "type.edit"] {
+        let mut s = session();
+        let id = s.execute("type.create", json!({"text": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+        let steps = s.active().unwrap().history.entries().len();
+        s.execute(command, json!({"layer": id, "name": "Heading"})).unwrap();
+        assert_eq!(s.active().unwrap().history.entries().len(), steps + 1);
+        assert!(s.undo());
+        assert!(s.redo());
+        s.execute("type.edit", json!({"layer": id, "text": "Changed"})).unwrap();
+        assert_eq!(layer_name_of(&s, id), "Heading", "{command}");
+        assert!(s.undo());
+        assert!(s.undo());
+        s.execute("type.edit", json!({"layer": id, "text": "Branched"})).unwrap();
+        assert_eq!(layer_name_of(&s, id), "Branched");
+    }
+}
+
+#[test]
+fn explicit_equal_name_legacy_unmarked_layers_keep_inference() {
+    // Default TextLayer models imported/old documents with no naming metadata.
+    for (name, expected) in [("Heading", "Changed"), ("Logo", "Logo"), ("Heading copy", "Heading copy")] {
+        let mut s = session();
+        let id = s.execute("type.create", json!({"text": "Heading"})).unwrap()["layer"].as_u64().unwrap();
+        let doc = Arc::make_mut(&mut s.active_mut().unwrap().doc);
+        let l = doc.layer_mut(LayerId(id)).unwrap();
+        l.name = name.into();
+        l.content = LayerContent::Text(TextLayer { text: "Heading".into(), ..Default::default() });
+        let bytes = photocraft_format::save_to_bytes(doc, &photocraft_format::SaveOptions::default()).unwrap();
+        s.active_mut().unwrap().doc = Arc::new(photocraft_format::load_from_bytes(&bytes).unwrap());
+        s.execute("type.edit", json!({"layer": id, "text": "Changed"})).unwrap();
+        assert_eq!(layer_name_of(&s, id), expected);
+    }
+}
+
 fn copied_text(s: &mut Session, id: u64) -> u64 {
     s.execute("layer.duplicate", json!({"layer": id})).unwrap()["layer"].as_u64().unwrap()
 }
