@@ -637,7 +637,7 @@ impl PhotocraftMcp {
     }
 
     #[tool(
-        description = "Export top-level layers as files beneath the write root (groups merged). Returns files, count of written files, and skipped: [{layer, name, reason}] for hidden layers (visible_only) and adjustments with no pixels of their own. A file that already exists is an error, not an overwrite."
+        description = "Export top-level layers as files (groups merged). Returns files and skipped: [{layer, name, reason}] for hidden layers (visible_only) and adjustments with no pixels of their own. Workspace exports resolve beneath the write root, also return count of written files, and reject existing files instead of overwriting them. Trusted-local/bridge exports use the engine command's file access policy."
     )]
     async fn doc_export_layers(&self, Parameters(p): Parameters<ExportLayersParams>) -> Result<CallToolResult, McpError> {
         let mut opts = serde_json::Map::new();
