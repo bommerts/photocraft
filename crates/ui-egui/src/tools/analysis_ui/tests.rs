@@ -622,7 +622,7 @@ mod selected_export_923 {
                     assert_eq!(f.h.state().ui.status, "#923 injected writer refusal");
                     assert_eq!(*f.attempts.borrow(), [(f.path(), ONE.to_vec())]);
                 }
-                Writer::Save => unreachable!("only failure controls here"),
+                Writer::Save => panic!("only failure controls here"),
             }
         }
     }
